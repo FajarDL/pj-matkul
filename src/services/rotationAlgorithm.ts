@@ -1,4 +1,4 @@
-import type { Student, SessionSchedule, RotationConfig } from '../types';
+import type { Student, SessionSchedule, RotationConfig, Course } from '../types';
 
 export interface StudentPjStat {
   student: Student;
@@ -116,6 +116,20 @@ export function generateRotationSchedule(
   return newSessions;
 }
 
+export const DAY_ORDER: Record<string, number> = {
+  senin: 1,
+  selasa: 2,
+  rabu: 3,
+  kamis: 4,
+  jumat: 5,
+  sabtu: 6,
+  minggu: 7,
+};
+
+export function getDayOrder(dayName: string): number {
+  return DAY_ORDER[dayName?.trim().toLowerCase()] ?? 8;
+}
+
 /**
  * Calculates how many times each student has been assigned, completed, etc.
  */
@@ -142,6 +156,150 @@ export function calculateStudentStats(
 }
 
 /**
+ * Generates a global fair rotation schedule across ALL courses sequentially
+ * so students take turns across the entire schedule rather than per-course duplicates.
+ */
+export function generateGlobalRotationSchedule(
+  courses: Course[],
+  students: Student[],
+  config: RotationConfig,
+  existingSessions: SessionSchedule[] = []
+): SessionSchedule[] {
+  const activeStudents = students.filter((s) => s.isActive);
+  if (activeStudents.length === 0 || courses.length === 0) {
+    return existingSessions;
+  }
+
+  // Determine student order based on mode
+  let sortedStudents: Student[] = [];
+  if (config.mode === 'fair_random') {
+    sortedStudents = shuffleArray(activeStudents);
+  } else if (config.mode === 'sequential_nim') {
+    sortedStudents = [...activeStudents].sort((a, b) => a.nim.localeCompare(b.nim));
+  } else if (config.mode === 'alphabetical') {
+    sortedStudents = [...activeStudents].sort((a, b) => a.name.localeCompare(b.name));
+  } else {
+    sortedStudents = [...activeStudents];
+  }
+
+  const courseMap = new Map<string, Course>();
+  courses.forEach((c) => courseMap.set(c.id, c));
+
+  // Build sessions map for all courses
+  const startDateObj = config.startDate ? new Date(config.startDate) : new Date();
+  const sessionsByCourse: Map<string, SessionSchedule[]> = new Map();
+
+  courses.forEach((course) => {
+    const list: SessionSchedule[] = [];
+    const courseExisting = existingSessions.filter((s) => s.courseId === course.id);
+
+    for (let sNum = 1; sNum <= course.totalSessions; sNum++) {
+      const existing = courseExisting.find((s) => s.sessionNumber === sNum);
+      if (existing) {
+        list.push({ ...existing });
+      } else {
+        const sessionDate = new Date(startDateObj);
+        sessionDate.setDate(startDateObj.getDate() + (sNum - 1) * (config.intervalDays || 7));
+        const dateStr = sessionDate.toISOString().split('T')[0];
+
+        let defaultTopic = `Pertemuan ${sNum} - ${course.name}`;
+        if (sNum === 8) defaultTopic = `Ujian Tengah Semester (UTS) - ${course.name}`;
+        if (sNum === course.totalSessions) defaultTopic = `Ujian Akhir Semester (UAS) - ${course.name}`;
+
+        list.push({
+          id: `sess-${course.id}-${sNum}-${Date.now()}`,
+          courseId: course.id,
+          sessionNumber: sNum,
+          date: dateStr,
+          topic: defaultTopic,
+          assignedPjIds: [],
+          status: 'upcoming',
+        });
+      }
+    }
+    sessionsByCourse.set(course.id, list);
+  });
+
+  // Flatten all sessions
+  const allSessions: SessionSchedule[] = [];
+  sessionsByCourse.forEach((list) => allSessions.push(...list));
+
+  // Chronologically sort sessions across all courses:
+  // 1. sessionNumber (Week 1, Week 2, ..., Week 16)
+  // 2. Day of week (Senin=1, Selasa=2, ...)
+  // 3. startTime ("08:00", "13:00")
+  allSessions.sort((a, b) => {
+    if (a.sessionNumber !== b.sessionNumber) {
+      return a.sessionNumber - b.sessionNumber;
+    }
+    const courseA = courseMap.get(a.courseId);
+    const courseB = courseMap.get(b.courseId);
+    const dayOrderA = getDayOrder(courseA?.day || '');
+    const dayOrderB = getDayOrder(courseB?.day || '');
+    if (dayOrderA !== dayOrderB) {
+      return dayOrderA - dayOrderB;
+    }
+    const timeA = courseA?.startTime || '00:00';
+    const timeB = courseB?.startTime || '00:00';
+    return timeA.localeCompare(timeB);
+  });
+
+  // Now distribute students fairly across all sessions in continuous round-robin
+  let studentPool = [...sortedStudents];
+  let poolIndex = 0;
+  const count = Math.max(1, config.pjCountPerSession);
+
+  // Keep track of assignments per week to avoid double assignment in same week if possible
+  const weekAssignments = new Map<number, Set<string>>();
+
+  const updatedSessions: SessionSchedule[] = allSessions.map((session) => {
+    const isExcluded = config.excludeSessionNumbers?.includes(session.sessionNumber);
+    if (isExcluded) {
+      return { ...session, assignedPjIds: [] };
+    }
+
+    if (!weekAssignments.has(session.sessionNumber)) {
+      weekAssignments.set(session.sessionNumber, new Set<string>());
+    }
+    const assignedThisWeek = weekAssignments.get(session.sessionNumber)!;
+
+    const assignedIds: string[] = [];
+    for (let p = 0; p < count; p++) {
+      if (poolIndex >= studentPool.length) {
+        studentPool = config.mode === 'fair_random' ? shuffleArray(activeStudents) : [...sortedStudents];
+        poolIndex = 0;
+      }
+
+      let candidate = studentPool[poolIndex];
+      let searchAttempts = 0;
+
+      while (
+        (assignedIds.includes(candidate.id) ||
+          (activeStudents.length > count * 2 &&
+            assignedThisWeek.has(candidate.id) &&
+            searchAttempts < Math.floor(studentPool.length / 2))) &&
+        searchAttempts < studentPool.length
+      ) {
+        poolIndex = (poolIndex + 1) % studentPool.length;
+        candidate = studentPool[poolIndex];
+        searchAttempts++;
+      }
+
+      assignedIds.push(candidate.id);
+      assignedThisWeek.add(candidate.id);
+      poolIndex++;
+    }
+
+    return {
+      ...session,
+      assignedPjIds: assignedIds,
+    };
+  });
+
+  return updatedSessions;
+}
+
+/**
  * Swaps PJ between two sessions
  */
 export function swapPjBetweenSessions(
@@ -165,7 +323,7 @@ export function swapPjBetweenSessions(
 }
 
 /**
- * Generate formatted WhatsApp broadcast message
+ * Generate formatted WhatsApp broadcast message for a single class session
  */
 export function generateWhatsAppMessage(
   courseName: string,
@@ -209,4 +367,61 @@ ${session.notes ? `📝 *Catatan Khusus:* \n${session.notes}\n` : ''}
 3. Mencatat presensi kehadiran dan membantu mendokumentasikan jalannya perkuliahan.
 
 Terima kasih atas kerja samanya! 🙏✨`;
+}
+
+/**
+ * Generate formatted WhatsApp digest for an entire week across all courses
+ */
+export function generateWeeklyWhatsAppMessage(
+  weekNumber: number,
+  courses: Course[],
+  sessions: SessionSchedule[],
+  students: Student[]
+): string {
+  const weekSessions = sessions.filter((s) => s.sessionNumber === weekNumber);
+  const courseMap = new Map(courses.map((c) => [c.id, c]));
+  const studentMap = new Map(students.map((s) => [s.id, s]));
+
+  // Sort sessions by day of week then time
+  const sorted = [...weekSessions].sort((a, b) => {
+    const cA = courseMap.get(a.courseId);
+    const cB = courseMap.get(b.courseId);
+    const dayA = getDayOrder(cA?.day || '');
+    const dayB = getDayOrder(cB?.day || '');
+    if (dayA !== dayB) return dayA - dayB;
+    return (cA?.startTime || '').localeCompare(cB?.startTime || '');
+  });
+
+  let message = `📢 *JADWAL KULIAH & ROTASI PJ MINGGU KE-${weekNumber}* 📢\n`;
+  message += `Daftar perkuliahan & penanggung jawab kelas minggu ini:\n`;
+  message += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+
+  let currentDay = '';
+  sorted.forEach((session) => {
+    const course = courseMap.get(session.courseId);
+    if (!course) return;
+
+    if (course.day.trim().toLowerCase() !== currentDay.trim().toLowerCase()) {
+      currentDay = course.day;
+      message += `📌 *HARI ${currentDay.toUpperCase()}*\n`;
+    }
+
+    const pjs = session.assignedPjIds
+      .map((id) => {
+        const st = studentMap.get(id);
+        return st ? `${st.name} (${st.nim})` : 'Mahasiswa';
+      })
+      .join(', ');
+
+    message += `📚 *${course.name}*\n`;
+    message += `   ⏰ ${course.startTime} - ${course.endTime} WIB | 📍 ${course.room}\n`;
+    message += `   👨‍🏫 ${course.lecturer}\n`;
+    message += `   🎯 Topik: ${session.topic}\n`;
+    message += `   👤 PJ: *${pjs || 'Belum ditentukan'}*\n\n`;
+  });
+
+  message += `━━━━━━━━━━━━━━━━━━━━━\n`;
+  message += `⚠️ *Pengingat PJ:* Mohon konfirmasi dosen minimal H-1, persiapkan ruangan/link perkuliahan, dan dampingi presensi kelas. Terima kasih! 🙏✨`;
+
+  return message;
 }

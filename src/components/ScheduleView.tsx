@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import type { Course, Student, SessionSchedule, RotationConfig, SessionStatus, UserRole } from '../types';
 import { 
   generateRotationSchedule, 
+  generateGlobalRotationSchedule,
   generateWhatsAppMessage, 
-  swapPjBetweenSessions 
+  swapPjBetweenSessions,
+  getDayOrder
 } from '../services/rotationAlgorithm';
 import { 
   Shuffle, 
@@ -16,37 +18,43 @@ import {
   X, 
   Search, 
   Info,
-  Lock
+  Lock,
+  Layers,
+  Sparkles
 } from 'lucide-react';
 
 interface ScheduleViewProps {
-  course: Course;
+  courses: Course[];
   students: Student[];
   sessions: SessionSchedule[];
   userRole: UserRole;
+  course?: Course;
   onUpdateSessions: (newSessions: SessionSchedule[]) => void;
   onRequestLogin?: () => void;
 }
 
 export const ScheduleView: React.FC<ScheduleViewProps> = ({
-  course,
+  courses,
   students,
   sessions,
   userRole,
+  course,
   onUpdateSessions,
   onRequestLogin,
 }) => {
   const isAdmin = userRole === 'owner' || userRole === 'admin';
+  const [selectedCourseId, setSelectedCourseId] = useState<string>(course?.id || 'all');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | SessionStatus>('all');
   
   // Modals state
-  const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
+  const [isGlobalModalOpen, setIsGlobalModalOpen] = useState(false);
+  const [isSingleCourseModalOpen, setIsSingleCourseModalOpen] = useState(false);
   const [isSwapModalOpen, setIsSwapModalOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<SessionSchedule | null>(null);
   const [copiedSessionId, setCopiedSessionId] = useState<string | null>(null);
 
-  // Generate Rotation Config Form State
+  // Rotation Config Form State
   const [rotationConfig, setRotationConfig] = useState<RotationConfig>({
     pjCountPerSession: 2,
     mode: 'fair_random',
@@ -61,30 +69,62 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   const [swapSessionBId, setSwapSessionBId] = useState<string>('');
   const [swapStudentBId, setSwapStudentBId] = useState<string>('');
 
-  const courseSessions = sessions
-    .filter((s) => s.courseId === course.id)
-    .sort((a, b) => a.sessionNumber - b.sessionNumber);
+  const courseMap = useMemo(() => {
+    const map = new Map<string, Course>();
+    courses.forEach((c) => map.set(c.id, c));
+    return map;
+  }, [courses]);
 
-  // Filtered sessions
-  const filteredSessions = courseSessions.filter((session) => {
-    if (statusFilter !== 'all' && session.status !== statusFilter) return false;
-    if (!searchQuery) return true;
+  const activeCourse = selectedCourseId !== 'all' ? courseMap.get(selectedCourseId) : null;
 
-    const query = searchQuery.toLowerCase();
-    const matchesSession = `pertemuan ${session.sessionNumber}`.includes(query) ||
-      session.topic.toLowerCase().includes(query) ||
-      session.date.includes(query);
+  // Filter sessions based on course filter
+  const displayedSessions = useMemo(() => {
+    let list = sessions;
+    if (selectedCourseId !== 'all') {
+      list = list.filter((s) => s.courseId === selectedCourseId);
+    }
 
-    const assignedStudents = students.filter((s) => session.assignedPjIds.includes(s.id));
-    const matchesStudent = assignedStudents.some(
-      (s) => s.name.toLowerCase().includes(query) || s.nim.toLowerCase().includes(query)
-    );
+    // Sort: if 'all', sort by sessionNumber, day, startTime; else by sessionNumber
+    return [...list].sort((a, b) => {
+      if (a.sessionNumber !== b.sessionNumber) {
+        return a.sessionNumber - b.sessionNumber;
+      }
+      const cA = courseMap.get(a.courseId);
+      const cB = courseMap.get(b.courseId);
+      const dayA = getDayOrder(cA?.day || '');
+      const dayB = getDayOrder(cB?.day || '');
+      if (dayA !== dayB) return dayA - dayB;
+      return (cA?.startTime || '').localeCompare(cB?.startTime || '');
+    });
+  }, [sessions, selectedCourseId, courseMap]);
 
-    return matchesSession || matchesStudent;
-  });
+  // Filtered sessions with search & status
+  const filteredSessions = useMemo(() => {
+    return displayedSessions.filter((session) => {
+      if (statusFilter !== 'all' && session.status !== statusFilter) return false;
+      if (!searchQuery.trim()) return true;
 
-  // Handle Generate Rotation
-  const handleGenerateRotation = (e: React.FormEvent) => {
+      const query = searchQuery.toLowerCase();
+      const courseObj = courseMap.get(session.courseId);
+      const courseName = courseObj?.name.toLowerCase() || '';
+      const courseCode = courseObj?.code.toLowerCase() || '';
+      const matchesCourse = courseName.includes(query) || courseCode.includes(query);
+      const matchesSession = `pertemuan ${session.sessionNumber}`.includes(query) ||
+        `m-${session.sessionNumber}`.includes(query) ||
+        session.topic.toLowerCase().includes(query) ||
+        session.date.includes(query);
+
+      const assignedStudents = students.filter((s) => session.assignedPjIds.includes(s.id));
+      const matchesStudent = assignedStudents.some(
+        (s) => s.name.toLowerCase().includes(query) || s.nim.toLowerCase().includes(query)
+      );
+
+      return matchesCourse || matchesSession || matchesStudent;
+    });
+  }, [displayedSessions, statusFilter, searchQuery, courseMap, students]);
+
+  // Handle Global Rotation Generation across ALL courses
+  const handleGenerateGlobalRotation = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isAdmin) {
       onRequestLogin?.();
@@ -96,17 +136,49 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       return;
     }
 
-    const updated = generateRotationSchedule(
-      course.id,
+    if (courses.length === 0) {
+      alert('Tambahkan mata kuliah terlebih dahulu di tab "Mata Kuliah"!');
+      return;
+    }
+
+    const updated = generateGlobalRotationSchedule(
+      courses,
       students,
-      course.totalSessions,
       rotationConfig,
-      courseSessions
+      sessions
     );
 
-    const otherSessions = sessions.filter((s) => s.courseId !== course.id);
+    onUpdateSessions(updated);
+    setIsGlobalModalOpen(false);
+  };
+
+  // Handle Single Course Rotation Generation
+  const handleGenerateSingleCourseRotation = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAdmin) {
+      onRequestLogin?.();
+      return;
+    }
+
+    if (!activeCourse) return;
+
+    if (students.filter((s) => s.isActive).length === 0) {
+      alert('Tambahkan mahasiswa aktif terlebih dahulu di tab "Data Mahasiswa"!');
+      return;
+    }
+
+    const currentCourseSessions = sessions.filter((s) => s.courseId === activeCourse.id);
+    const updated = generateRotationSchedule(
+      activeCourse.id,
+      students,
+      activeCourse.totalSessions,
+      rotationConfig,
+      currentCourseSessions
+    );
+
+    const otherSessions = sessions.filter((s) => s.courseId !== activeCourse.id);
     onUpdateSessions([...otherSessions, ...updated]);
-    setIsGenerateModalOpen(false);
+    setIsSingleCourseModalOpen(false);
   };
 
   // Handle Swap PJ
@@ -140,13 +212,16 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
   // Handle Copy WA
   const handleCopyWA = (session: SessionSchedule) => {
+    const courseObj = courseMap.get(session.courseId);
+    if (!courseObj) return;
+
     const assigned = students.filter((s) => session.assignedPjIds.includes(s.id));
     const text = generateWhatsAppMessage(
-      course.name,
-      course.lecturer,
-      course.day,
-      `${course.startTime} - ${course.endTime}`,
-      course.room,
+      courseObj.name,
+      courseObj.lecturer,
+      courseObj.day,
+      `${courseObj.startTime} - ${courseObj.endTime}`,
+      courseObj.room,
       session,
       assigned
     );
@@ -157,13 +232,19 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
   // Handle Export CSV
   const handleExportCSV = () => {
-    const headers = ['Pertemuan', 'Tanggal', 'Topik', 'PJ 1', 'PJ 2', 'Status', 'Catatan'];
-    const rows = courseSessions.map((session) => {
+    const headers = ['Mata Kuliah', 'Kode', 'Pertemuan', 'Hari', 'Jam', 'Ruangan', 'Tanggal', 'Topik', 'PJ 1', 'PJ 2', 'Status', 'Catatan'];
+    const rows = displayedSessions.map((session) => {
+      const courseObj = courseMap.get(session.courseId);
       const assigned = students.filter((s) => session.assignedPjIds.includes(s.id));
       const pj1 = assigned[0] ? `${assigned[0].name} (${assigned[0].nim})` : '-';
       const pj2 = assigned[1] ? `${assigned[1].name} (${assigned[1].nim})` : '-';
       return [
+        `"${courseObj?.name || '-'}"`,
+        `"${courseObj?.code || '-'}"`,
         `Pertemuan ${session.sessionNumber}`,
+        `"${courseObj?.day || '-'}"`,
+        `"${courseObj?.startTime || '-'} - ${courseObj?.endTime || '-'}"`,
+        `"${courseObj?.room || '-'}"`,
         session.date,
         `"${session.topic.replace(/"/g, '""')}"`,
         `"${pj1}"`,
@@ -177,7 +258,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `jadwal-rotasi-${course.code.toLowerCase()}.csv`);
+    const filename = activeCourse ? `jadwal-rotasi-${activeCourse.code.toLowerCase()}.csv` : `jadwal-rotasi-semua-matkul.csv`;
+    link.setAttribute('download', filename);
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -195,7 +277,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
   // Toggle status
   const handleStatusToggle = (sessionId: string) => {
-    if (!isAdmin) return; // Protected for admin
+    if (!isAdmin) return;
     const statusCycle: SessionStatus[] = ['upcoming', 'ongoing', 'completed'];
     const updated = sessions.map((s) => {
       if (s.id === sessionId) {
@@ -210,35 +292,100 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   return (
     <div className="space-y-6">
       
+      {/* Course Filter Pills: View All or Filter by Course */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-2xs space-y-3 no-print">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-700 uppercase tracking-wider">
+            <Layers className="w-4 h-4 text-indigo-600" />
+            <span>Pilih Mata Kuliah untuk Ditampilkan:</span>
+          </div>
+          <span className="text-xs text-slate-400">
+            {courses.length} Mata Kuliah Terdaftar
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
+          <button
+            onClick={() => setSelectedCourseId('all')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer shrink-0 ${
+              selectedCourseId === 'all'
+                ? 'bg-slate-900 text-white shadow-2xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            Semua Mata Kuliah ({sessions.length} Sesi)
+          </button>
+
+          {courses.map((c) => {
+            const isSelected = selectedCourseId === c.id;
+
+            return (
+              <button
+                key={c.id}
+                onClick={() => setSelectedCourseId(c.id)}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                  isSelected
+                    ? 'bg-indigo-600 text-white shadow-2xs ring-2 ring-indigo-600 ring-offset-1'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                <span>{c.name}</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${isSelected ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                  {c.code}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Action Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs no-print">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <span>Jadwal Rotasi Perkuliahan ({course.code})</span>
+            <span>
+              {activeCourse ? `Jadwal Rotasi: ${activeCourse.name} (${activeCourse.code})` : 'Jadwal & Rotasi Semua Mata Kuliah'}
+            </span>
             <span className="text-xs bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded-full font-semibold border border-slate-200">
-              {courseSessions.length} Pertemuan
+              {displayedSessions.length} Sesi
             </span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Daftar resmi penugasan penanggung jawab perkuliahan per pertemuan semester aktif.
+            {activeCourse 
+              ? `${activeCourse.day}, ${activeCourse.startTime} - ${activeCourse.endTime} WIB | Dosen: ${activeCourse.lecturer}`
+              : 'Rotasi berkesinambungan di seluruh mata kuliah agar beban tugas terbagi secara adil.'
+            }
           </p>
         </div>
 
-        {/* Buttons */}
+        {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-2">
           {isAdmin ? (
             <>
+              {/* Prominent Global Rotation Button */}
               <button
-                onClick={() => setIsGenerateModalOpen(true)}
-                className="inline-flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs sm:text-sm px-3.5 py-2 rounded-xl shadow-xs transition cursor-pointer"
+                onClick={() => setIsGlobalModalOpen(true)}
+                className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs sm:text-sm px-4 py-2.5 rounded-xl shadow-xs transition cursor-pointer"
+                title="Acak rotasi serentak untuk semua mata kuliah agar giliran adil dan tidak bentrok"
               >
                 <Shuffle className="w-4 h-4" />
-                <span>Generate Rotasi</span>
+                <span>Rotasi Semua Matkul (Global)</span>
               </button>
+
+              {activeCourse && (
+                <button
+                  onClick={() => setIsSingleCourseModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs sm:text-sm px-3.5 py-2.5 rounded-xl shadow-xs transition cursor-pointer"
+                  title="Hanya acak rotasi untuk mata kuliah ini saja"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>Rotasi Matkul Ini Saja</span>
+                </button>
+              )}
 
               <button
                 onClick={() => setIsSwapModalOpen(true)}
-                className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs sm:text-sm px-3.5 py-2 rounded-xl transition cursor-pointer border border-slate-200"
+                className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs sm:text-sm px-3.5 py-2.5 rounded-xl transition cursor-pointer border border-slate-200"
               >
                 <ArrowLeftRight className="w-4 h-4 text-slate-600" />
                 <span>Tukar PJ (Swap)</span>
@@ -248,16 +395,16 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
             <button
               onClick={onRequestLogin}
               className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-xs px-3 py-2 rounded-xl border border-slate-200 transition"
-              title="Masuk sebagai komti untuk mengacak atau menukar giliran"
+              title="Masukkan kunci akses untuk mengacak atau menukar giliran"
             >
               <Lock className="w-3.5 h-3.5 text-slate-500" />
-              <span>Masuk Komti untuk Edit</span>
+              <span>Buka Kunci untuk Edit</span>
             </button>
           )}
 
           <button
             onClick={handleExportCSV}
-            className="inline-flex items-center gap-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium text-xs sm:text-sm px-3 py-2 rounded-xl transition cursor-pointer"
+            className="inline-flex items-center gap-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium text-xs sm:text-sm px-3 py-2.5 rounded-xl transition cursor-pointer"
             title="Download CSV"
           >
             <Download className="w-4 h-4 text-slate-500" />
@@ -266,8 +413,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
           <button
             onClick={() => window.print()}
-            className="inline-flex items-center gap-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium text-xs sm:text-sm px-3 py-2 rounded-xl transition cursor-pointer"
-            title="Cetak Jadwal Resmi"
+            className="inline-flex items-center gap-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium text-xs sm:text-sm px-3 py-2.5 rounded-xl transition cursor-pointer"
+            title="Cetak Dokumen Resmi"
           >
             <Printer className="w-4 h-4 text-slate-500" />
             <span className="hidden sm:inline">Cetak PDF</span>
@@ -277,11 +424,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
       {/* Filter and Search */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 no-print">
-        <div className="relative w-full sm:w-72">
+        <div className="relative w-full sm:w-80">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="Cari sesi, materi, atau nama PJ..."
+            placeholder="Cari matkul, sesi, materi, atau nama PJ..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 text-slate-800"
@@ -312,8 +459,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
           <table className="w-full text-left border-collapse text-xs sm:text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold text-xs uppercase tracking-wider">
-                <th className="py-3 px-4 w-16 text-center">Sesi</th>
-                <th className="py-3 px-4 w-36">Hari & Tanggal</th>
+                <th className="py-3 px-4 w-16 text-center">Minggu</th>
+                {selectedCourseId === 'all' && (
+                  <th className="py-3 px-4 w-52">Mata Kuliah & Jadwal</th>
+                )}
+                <th className="py-3 px-4 w-32">Hari & Tanggal</th>
                 <th className="py-3 px-4">Pokok Bahasan / Materi</th>
                 <th className="py-3 px-4">Penanggung Jawab (PJ)</th>
                 <th className="py-3 px-4 w-28 text-center">Status</th>
@@ -323,36 +473,54 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
             <tbody className="divide-y divide-slate-100">
               {filteredSessions.length > 0 ? (
                 filteredSessions.map((session) => {
+                  const courseObj = courseMap.get(session.courseId);
                   const assignedStudents = students.filter((s) => session.assignedPjIds.includes(s.id));
-                  const isUtsOrUas = session.sessionNumber === 8 || session.sessionNumber === course.totalSessions;
+                  const isSpecial = session.sessionNumber === 8 || session.sessionNumber === (courseObj?.totalSessions || 16);
 
                   return (
                     <tr 
                       key={session.id} 
                       className={`hover:bg-slate-50/70 transition ${
-                        isUtsOrUas ? 'bg-slate-50/50' : ''
+                        isSpecial ? 'bg-slate-50/40' : ''
                       }`}
                     >
                       <td className="py-3.5 px-4 text-center">
-                        <span className={`inline-flex items-center justify-center w-7 h-7 rounded-md font-mono font-bold text-xs ${
-                          isUtsOrUas 
+                        <span className={`inline-flex items-center justify-center px-2 py-1 rounded-md font-mono font-bold text-xs ${
+                          isSpecial 
                             ? 'bg-slate-900 text-white' 
                             : 'bg-slate-100 text-slate-700'
                         }`}>
-                          #{session.sessionNumber}
+                          M-{session.sessionNumber}
                         </span>
                       </td>
 
+                      {/* Course Identity (shown when in "all" view) */}
+                      {selectedCourseId === 'all' && (
+                        <td className="py-3.5 px-4">
+                          <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                            <span className="font-mono text-[10px] bg-slate-900 text-white px-1.5 py-0.2 rounded">
+                              {courseObj?.code || '-'}
+                            </span>
+                            <span className="truncate">{courseObj?.name || 'Mata Kuliah'}</span>
+                          </div>
+                          <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+                            <span>{courseObj?.startTime} - {courseObj?.endTime} WIB</span>
+                            <span>&bull;</span>
+                            <span className="truncate">{courseObj?.room}</span>
+                          </div>
+                        </td>
+                      )}
+
                       <td className="py-3.5 px-4 whitespace-nowrap">
                         <div className="font-semibold text-slate-900">
+                          {courseObj?.day || '-'}
+                        </div>
+                        <div className="text-[11px] text-slate-500">
                           {new Date(session.date).toLocaleDateString('id-ID', {
                             day: 'numeric',
                             month: 'short',
                             year: 'numeric',
                           })}
-                        </div>
-                        <div className="text-[11px] text-slate-500">
-                          {new Date(session.date).toLocaleDateString('id-ID', { weekday: 'long' })}
                         </div>
                       </td>
 
@@ -374,15 +542,20 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                             {assignedStudents.map((student) => (
                               <div
                                 key={student.id}
-                                className="inline-flex items-center gap-1.5 bg-slate-100 border border-slate-200 text-slate-800 px-2 py-0.5 rounded text-xs font-medium"
+                                className="inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 text-indigo-900 px-2 py-0.5 rounded-lg text-xs font-semibold"
                               >
+                                <span className="w-4 h-4 rounded-full bg-indigo-600 text-white text-[9px] flex items-center justify-center font-bold shrink-0">
+                                  {student.name.charAt(0)}
+                                </span>
                                 <span>{student.name}</span>
-                                <span className="text-[11px] font-mono text-slate-500">({student.nim})</span>
+                                <span className="text-[10px] font-mono text-indigo-600">({student.nim})</span>
                               </div>
                             ))}
                           </div>
                         ) : (
-                          <span className="text-xs text-slate-400 italic">Belum Ditugaskan</span>
+                          <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 italic">
+                            Belum Ada PJ
+                          </span>
                         )}
                       </td>
 
@@ -412,7 +585,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                           <button
                             onClick={() => handleCopyWA(session)}
                             title="Salin Pesan Format WhatsApp"
-                            className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition"
+                            className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition cursor-pointer"
                           >
                             {copiedSessionId === session.id ? (
                               <Check className="w-4 h-4 text-emerald-600" />
@@ -424,7 +597,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                             <button
                               onClick={() => setEditingSession({ ...session })}
                               title="Edit Detail Sesi & PJ"
-                              className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition"
+                              className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition cursor-pointer"
                             >
                               <Edit3 className="w-4 h-4" />
                             </button>
@@ -436,8 +609,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                 })
               ) : (
                 <tr>
-                  <td colSpan={6} className="py-10 text-center text-slate-500">
-                    Tidak ditemukan pertemuan yang sesuai dengan filter pencarian.
+                  <td colSpan={selectedCourseId === 'all' ? 7 : 6} className="py-10 text-center text-slate-500">
+                    Tidak ditemukan sesi perkuliahan yang sesuai dengan filter pencarian.
                   </td>
                 </tr>
               )}
@@ -446,20 +619,30 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
         </div>
       </div>
 
-      {/* MODAL: Generate Rotation (Admin only) */}
-      {isGenerateModalOpen && isAdmin && (
+      {/* MODAL: Generate Global Rotation (Across ALL Courses) */}
+      {isGlobalModalOpen && isAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs no-print">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-base font-bold text-slate-900">
-                Konfigurasi Generator Rotasi Otomatis
-              </h3>
-              <button onClick={() => setIsGenerateModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1">
+              <div className="flex items-center gap-2">
+                <Shuffle className="w-5 h-5 text-indigo-600" />
+                <h3 className="text-base font-bold text-slate-900">
+                  Rotasi Global Semua Mata Kuliah
+                </h3>
+              </div>
+              <button onClick={() => setIsGlobalModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleGenerateRotation} className="space-y-4">
+            <div className="bg-indigo-50/80 border border-indigo-200/80 p-3.5 rounded-xl text-xs text-indigo-900 space-y-1">
+              <span className="font-bold block">Prinsip Rotasi Global:</span>
+              <p className="leading-relaxed">
+                Mahasiswa akan digilir secara berkesinambungan di <strong>semua mata kuliah sekaligus</strong> (Senin s/d Jumat/Sabtu), sehingga setiap mahasiswa mendapat giliran merata tanpa bertugas ganda pada minggu yang sama.
+              </p>
+            </div>
+
+            <form onSubmit={handleGenerateGlobalRotation} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
                   Jumlah PJ Per Sesi Pertemuan
@@ -470,7 +653,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                       type="button"
                       key={num}
                       onClick={() => setRotationConfig({ ...rotationConfig, pjCountPerSession: num })}
-                      className={`py-2 text-xs font-semibold rounded-lg border transition ${
+                      className={`py-2 text-xs font-semibold rounded-lg border transition cursor-pointer ${
                         rotationConfig.pjCountPerSession === num
                           ? 'bg-slate-900 text-white border-slate-900'
                           : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
@@ -484,22 +667,22 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Metode Rotasi Penugasan
+                  Metode Pengacakan & Urutan
                 </label>
                 <div className="space-y-2">
                   <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
                     <input
                       type="radio"
-                      name="rotationMode"
+                      name="globalMode"
                       value="fair_random"
                       checked={rotationConfig.mode === 'fair_random'}
                       onChange={() => setRotationConfig({ ...rotationConfig, mode: 'fair_random' })}
                       className="mt-0.5 text-slate-900 focus:ring-slate-900"
                     />
                     <div>
-                      <div className="text-xs font-bold text-slate-900">Acak Adil (Fair Randomization)</div>
+                      <div className="text-xs font-bold text-slate-900">Acak Adil & Merata (Fair Random)</div>
                       <div className="text-[11px] text-slate-500">
-                        Urutan diacak, tetapi setiap mahasiswa dijamin mendapat 1 giliran sebelum ada yang bertugas 2 kali.
+                        Urutan diacak secara merata ke seluruh jadwal mata kuliah.
                       </div>
                     </div>
                   </label>
@@ -507,16 +690,16 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                   <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
                     <input
                       type="radio"
-                      name="rotationMode"
+                      name="globalMode"
                       value="sequential_nim"
                       checked={rotationConfig.mode === 'sequential_nim'}
                       onChange={() => setRotationConfig({ ...rotationConfig, mode: 'sequential_nim' })}
                       className="mt-0.5 text-slate-900 focus:ring-slate-900"
                     />
                     <div>
-                      <div className="text-xs font-bold text-slate-900">Berurutan Sesuai NIM</div>
+                      <div className="text-xs font-bold text-slate-900">Berurutan Sesuai Urutan NIM</div>
                       <div className="text-[11px] text-slate-500">
-                        Mahasiswa ditugaskan berurutan dari nomor induk mahasiswa (NIM) terkecil.
+                        Mahasiswa bergilir sesuai urutan nomor induk mahasiswa terkecil.
                       </div>
                     </div>
                   </label>
@@ -524,63 +707,106 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                   <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
                     <input
                       type="radio"
-                      name="rotationMode"
+                      name="globalMode"
                       value="alphabetical"
                       checked={rotationConfig.mode === 'alphabetical'}
                       onChange={() => setRotationConfig({ ...rotationConfig, mode: 'alphabetical' })}
                       className="mt-0.5 text-slate-900 focus:ring-slate-900"
                     />
                     <div>
-                      <div className="text-xs font-bold text-slate-900">Berurutan Sesuai Abjad (A-Z)</div>
+                      <div className="text-xs font-bold text-slate-900">Berurutan Berdasarkan Abjad (A-Z)</div>
                       <div className="text-[11px] text-slate-500">
-                        Mahasiswa ditugaskan urut berdasarkan alfabet nama lengkap.
+                        Mahasiswa bergilir urut dari nama alfabetis A ke Z.
                       </div>
                     </div>
                   </label>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                    Tanggal Pertemuan 1
-                  </label>
-                  <input
-                    type="date"
-                    value={rotationConfig.startDate}
-                    onChange={(e) => setRotationConfig({ ...rotationConfig, startDate: e.target.value })}
-                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                    Siklus Perkuliahan
-                  </label>
-                  <select
-                    value={rotationConfig.intervalDays}
-                    onChange={(e) => setRotationConfig({ ...rotationConfig, intervalDays: Number(e.target.value) })}
-                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                  >
-                    <option value={7}>Setiap 7 Hari (Mingguan)</option>
-                    <option value={14}>Setiap 14 Hari (Dua Mingguan)</option>
-                  </select>
-                </div>
-              </div>
-
               <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsGenerateModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                  onClick={() => setIsGlobalModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white rounded-lg shadow-sm"
+                  className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs transition cursor-pointer"
                 >
-                  Jalankan Generator Rotasi
+                  Terapkan Rotasi Global Sekarang
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Single Course Rotation */}
+      {isSingleCourseModalOpen && isAdmin && activeCourse && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs no-print">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="text-base font-bold text-slate-900">
+                Rotasi Khusus Mata Kuliah: {activeCourse.name}
+              </h3>
+              <button onClick={() => setIsSingleCourseModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleGenerateSingleCourseRotation} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                  Jumlah PJ Per Sesi
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[1, 2, 3].map((num) => (
+                    <button
+                      type="button"
+                      key={num}
+                      onClick={() => setRotationConfig({ ...rotationConfig, pjCountPerSession: num })}
+                      className={`py-2 text-xs font-semibold rounded-lg border transition cursor-pointer ${
+                        rotationConfig.pjCountPerSession === num
+                          ? 'bg-slate-900 text-white border-slate-900'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      {num} Orang
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
+                  Metode Pengacakan
+                </label>
+                <select
+                  value={rotationConfig.mode}
+                  onChange={(e) => setRotationConfig({ ...rotationConfig, mode: e.target.value as any })}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
+                >
+                  <option value="fair_random">Acak Adil (Fair Random)</option>
+                  <option value="sequential_nim">Urutan NIM</option>
+                  <option value="alphabetical">Urutan Nama A-Z</option>
+                </select>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSingleCourseModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white rounded-lg cursor-pointer"
+                >
+                  Acak Matkul Ini
                 </button>
               </div>
             </form>
@@ -596,13 +822,13 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
               <h3 className="text-base font-bold text-slate-900">
                 Tukar Jadwal Penugasan (Swap PJ)
               </h3>
-              <button onClick={() => setIsSwapModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1">
+              <button onClick={() => setIsSwapModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <p className="text-xs text-slate-500">
-              Pilih dua pertemuan dan nama mahasiswa yang akan saling ditukar jadwal penugasannya.
+              Pilih dua pertemuan perkuliahan dan nama mahasiswa yang akan saling bertukar giliran PJ.
             </p>
 
             <form onSubmit={handleExecuteSwap} className="space-y-3">
@@ -619,11 +845,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                     required
                   >
                     <option value="">Pilih Sesi...</option>
-                    {courseSessions.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        Sesi #{s.sessionNumber} ({s.date})
-                      </option>
-                    ))}
+                    {displayedSessions.map((s) => {
+                      const c = courseMap.get(s.courseId);
+                      return (
+                        <option key={s.id} value={s.id}>
+                          {c ? `[${c.code}] ` : ''}M-{s.sessionNumber} ({s.date})
+                        </option>
+                      );
+                    })}
                   </select>
 
                   <select
@@ -636,7 +865,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                     <option value="">Pilih Mahasiswa...</option>
                     {students
                       .filter((std) => {
-                        const sess = courseSessions.find((s) => s.id === swapSessionAId);
+                        const sess = sessions.find((s) => s.id === swapSessionAId);
                         return sess?.assignedPjIds.includes(std.id);
                       })
                       .map((std) => (
@@ -661,11 +890,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                     required
                   >
                     <option value="">Pilih Sesi...</option>
-                    {courseSessions.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        Sesi #{s.sessionNumber} ({s.date})
-                      </option>
-                    ))}
+                    {displayedSessions.map((s) => {
+                      const c = courseMap.get(s.courseId);
+                      return (
+                        <option key={s.id} value={s.id}>
+                          {c ? `[${c.code}] ` : ''}M-{s.sessionNumber} ({s.date})
+                        </option>
+                      );
+                    })}
                   </select>
 
                   <select
@@ -678,7 +910,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                     <option value="">Pilih Mahasiswa...</option>
                     {students
                       .filter((std) => {
-                        const sess = courseSessions.find((s) => s.id === swapSessionBId);
+                        const sess = sessions.find((s) => s.id === swapSessionBId);
                         return sess?.assignedPjIds.includes(std.id);
                       })
                       .map((std) => (
@@ -694,13 +926,13 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsSwapModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white rounded-lg shadow-sm"
+                  className="px-4 py-2 text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white rounded-lg shadow-sm cursor-pointer"
                 >
                   Tukar Penugasan
                 </button>
@@ -716,9 +948,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900">
-                Edit Sesi Pertemuan #{editingSession.sessionNumber}
+                Edit Sesi Minggu #{editingSession.sessionNumber}
               </h3>
-              <button onClick={() => setEditingSession(null)} className="text-slate-400 hover:text-slate-600 p-1">
+              <button onClick={() => setEditingSession(null)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -814,13 +1046,13 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setEditingSession(null)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white rounded-lg shadow-sm"
+                  className="px-4 py-2 text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white rounded-lg shadow-sm cursor-pointer"
                 >
                   Simpan Perubahan
                 </button>

@@ -10,7 +10,7 @@ import { CourseManager } from './components/CourseManager';
 import { PrintScheduleView } from './components/PrintScheduleView';
 import { LoginModal } from './components/LoginModal';
 import { SecuritySettingsModal } from './components/SecuritySettingsModal';
-import { CheckCircle2, BookOpen } from 'lucide-react';
+import { CheckCircle2 } from 'lucide-react';
 
 export function App() {
   const [data, setData] = useState<AppState>(() => storageService.loadData());
@@ -330,70 +330,36 @@ export function App() {
         )}
 
         {activeTab === 'dashboard' && (
-          activeCourse ? (
-            <DashboardView
-              course={activeCourse}
-              students={data.students}
-              sessions={data.sessions}
-              userRole={authSession.role}
-              currentStudentNim={authSession.studentNim}
-              onNavigateToSchedule={() => setActiveTab('schedule')}
-              onNavigateToStudents={() => setActiveTab('students')}
-              onToggleSessionStatus={handleToggleSessionStatus}
-              onRequestLogin={() => setIsLoginModalOpen(true)}
-            />
-          ) : (
-            <div className="bg-white rounded-2xl p-10 sm:p-14 text-center border border-slate-200 shadow-2xs max-w-md mx-auto my-10">
-              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-4 text-slate-500">
-                <BookOpen className="w-6 h-6" />
-              </div>
-              <h2 className="text-lg font-bold text-slate-900">Belum Ada Mata Kuliah</h2>
-              <p className="text-xs text-slate-500 mt-1.5 mb-6">
-                Data mata kuliah saat ini kosong. Tambahkan mata kuliah baru atau pilih dari preset kurikulum otomatis untuk memulai.
-              </p>
-              <button
-                onClick={() => {
-                  if (authSession.role !== 'admin') {
-                    setIsLoginModalOpen(true);
-                  } else {
-                    setActiveTab('courses');
-                  }
-                }}
-                className="bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs px-4 py-2.5 rounded-xl shadow-xs transition cursor-pointer"
-              >
-                + Tambah / Pilih Template Mata Kuliah
-              </button>
-            </div>
-          )
+          <DashboardView
+            courses={data.courses}
+            students={data.students}
+            sessions={data.sessions}
+            userRole={authSession.role}
+            currentStudentNim={authSession.studentNim}
+            onNavigateToSchedule={(courseId) => {
+              if (courseId) handleSelectCourse(courseId);
+              setActiveTab('schedule');
+            }}
+            onNavigateToCourses={() => setActiveTab('courses')}
+            onNavigateToStudents={() => setActiveTab('students')}
+            onToggleSessionStatus={handleToggleSessionStatus}
+            onOpenGlobalRotationModal={() => {
+              setActiveTab('schedule');
+            }}
+            onRequestLogin={() => setIsLoginModalOpen(true)}
+          />
         )}
 
         {activeTab === 'schedule' && (
-          activeCourse ? (
-            <ScheduleView
-              course={activeCourse}
-              students={data.students}
-              sessions={data.sessions}
-              userRole={authSession.role}
-              onUpdateSessions={handleUpdateSessions}
-              onRequestLogin={() => setIsLoginModalOpen(true)}
-            />
-          ) : (
-            <div className="bg-white rounded-2xl p-10 sm:p-14 text-center border border-slate-200 shadow-2xs max-w-md mx-auto my-10">
-              <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center mx-auto mb-4 text-slate-500">
-                <BookOpen className="w-6 h-6" />
-              </div>
-              <h2 className="text-lg font-bold text-slate-900">Pilih Mata Kuliah</h2>
-              <p className="text-xs text-slate-500 mt-1.5 mb-6">
-                Silakan buat atau pilih mata kuliah terlebih dahulu untuk melihat dan mengelola jadwal rotasi perkuliahan.
-              </p>
-              <button
-                onClick={() => setActiveTab('courses')}
-                className="bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs px-4 py-2.5 rounded-xl shadow-xs transition cursor-pointer"
-              >
-                Buka Menu Mata Kuliah &rarr;
-              </button>
-            </div>
-          )
+          <ScheduleView
+            courses={data.courses}
+            students={data.students}
+            sessions={data.sessions}
+            userRole={authSession.role}
+            course={activeCourse}
+            onUpdateSessions={handleUpdateSessions}
+            onRequestLogin={() => setIsLoginModalOpen(true)}
+          />
         )}
       </main>
 

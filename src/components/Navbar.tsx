@@ -8,7 +8,6 @@ import {
   Download, 
   Upload, 
   RotateCcw, 
-  ChevronDown, 
   GraduationCap,
   Lock,
   KeyRound
@@ -17,16 +16,16 @@ import {
 interface NavbarProps {
   activeTab: 'dashboard' | 'schedule' | 'students' | 'courses';
   setActiveTab: (tab: 'dashboard' | 'schedule' | 'students' | 'courses') => void;
-  courses: Course[];
-  activeCourseId: string | null;
+  courses?: Course[];
+  activeCourseId?: string | null;
   userRole: UserRole;
   userName: string;
   pendingCount?: number;
-  onSelectCourse: (courseId: string) => void;
+  onSelectCourse?: (courseId: string) => void;
   onBackup: () => void;
   onRestore: (file: File) => void;
   onReset: () => void;
-  onOpenNewCourse: () => void;
+  onOpenNewCourse?: () => void;
   onOpenLogin: () => void;
   onOpenSecurity: () => void;
   onLogout?: () => void;
@@ -35,22 +34,21 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   setActiveTab,
-  courses,
-  activeCourseId,
+  courses: _courses = [],
+  activeCourseId: _activeCourseId,
   userRole,
   userName: _userName,
   pendingCount: _pendingCount = 0,
-  onSelectCourse,
+  onSelectCourse: _onSelectCourse,
   onBackup,
   onRestore,
   onReset,
-  onOpenNewCourse,
+  onOpenNewCourse: _onOpenNewCourse,
   onOpenLogin: _onOpenLogin,
   onOpenSecurity,
   onLogout,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const activeCourse = courses.find((c) => c.id === activeCourseId);
   const isAdmin = userRole === 'owner' || userRole === 'admin';
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -86,32 +84,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           </div>
 
-          {/* Right Controls: Course Selector, Role Badge & Utilities */}
+          {/* Right Controls: Role Badge & Utilities */}
           <div className="flex items-center gap-2 sm:gap-3">
-            
-            {/* Active Course Selector */}
-            <div className="relative">
-              <select
-                value={activeCourseId || ''}
-                onChange={(e) => {
-                  if (e.target.value === '__NEW__') {
-                    onOpenNewCourse();
-                  } else {
-                    onSelectCourse(e.target.value);
-                  }
-                }}
-                className="appearance-none bg-slate-50 hover:bg-slate-100 text-slate-900 text-xs sm:text-sm font-semibold py-2 pl-3 pr-8 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-900 cursor-pointer transition max-w-[150px] sm:max-w-[210px] truncate"
-              >
-                {courses.map((course) => (
-                  <option key={course.id} value={course.id}>
-                    {course.code} - {course.name}
-                  </option>
-                ))}
-                {isAdmin && <option value="__NEW__">+ Tambah Mata Kuliah</option>}
-              </select>
-              <ChevronDown className="w-4 h-4 text-slate-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-
             {/* Kunci Akses Settings */}
             <button
               onClick={onOpenSecurity}
@@ -186,7 +160,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <LayoutDashboard className="w-4 h-4" />
-              <span>Ringkasan</span>
+              <span>Dashboard Minggu Ini</span>
             </button>
 
             <button
@@ -199,11 +173,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <CalendarDays className="w-4 h-4" />
               <span>Jadwal & Rotasi</span>
-              {activeCourse && (
-                <span className="ml-1 bg-white/20 text-current text-[11px] px-1.5 py-0.2 rounded font-mono">
-                  {activeCourse.totalSessions} Sesi
-                </span>
-              )}
             </button>
 
             <button
