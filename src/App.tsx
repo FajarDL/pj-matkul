@@ -430,6 +430,7 @@ export function App() {
             onReset={() => handleReset(true)}
             onDeleteAllCourses={() => handleDeleteAllCourses(true)}
             onDeleteAllStudents={() => handleDeleteAllStudents(true)}
+            onUpdateSessions={handleUpdateSessions}
           />
         )}
 

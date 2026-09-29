@@ -4,7 +4,8 @@ import {
   generateWhatsAppMessage, 
   generateWeeklyWhatsAppMessage, 
   getDayOrder,
-  isPracticumCourse 
+  isPracticumCourse,
+  swapPjBetweenSessions
 } from '../services/rotationAlgorithm';
 import { 
   Calendar, 
@@ -29,7 +30,10 @@ import {
   RotateCcw,
   Trash2,
   KeyRound,
-  ShieldAlert
+  ShieldAlert,
+  ArrowLeftRight,
+  UserCheck,
+  UserPlus
 } from 'lucide-react';
 import { authService } from '../services/authService';
 
@@ -48,6 +52,7 @@ interface DashboardViewProps {
   onReset?: () => void;
   onDeleteAllCourses?: () => void;
   onDeleteAllStudents?: () => void;
+  onUpdateSessions?: (sessions: SessionSchedule[]) => void;
 }
 
 const DAYS_OF_WEEK = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -56,24 +61,39 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   courses,
   students,
   sessions,
-  userRole: _userRole,
+  userRole,
   currentStudentNim,
   onNavigateToSchedule,
   onNavigateToCourses,
   onNavigateToStudents,
   onToggleSessionStatus,
   onOpenGlobalRotationModal,
-  onRequestLogin: _onRequestLogin,
+  onRequestLogin,
   onReset,
   onDeleteAllCourses,
   onDeleteAllStudents,
+  onUpdateSessions,
 }) => {
+  const isAdmin = userRole === 'owner' || userRole === 'admin';
   const [copiedSessionId, setCopiedSessionId] = useState<string | null>(null);
   const [copiedWeekDigest, setCopiedWeekDigest] = useState(false);
   const [personalSearchQuery, setPersonalSearchQuery] = useState(currentStudentNim || '');
   const [isWaModalOpen, setIsWaModalOpen] = useState(false);
   const [editableWaText, setEditableWaText] = useState('');
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+
+  // Swap & Replace PJ Modal State
+  const [isSwapModalOpen, setIsSwapModalOpen] = useState(false);
+  const [activeSessionForSwap, setActiveSessionForSwap] = useState<SessionSchedule | null>(null);
+  const [swapTab, setSwapTab] = useState<'replace' | 'swap'>('replace');
+  const [selectedStudentToReplace, setSelectedStudentToReplace] = useState<string>('');
+  const [searchStudentQuery, setSearchStudentQuery] = useState('');
+  const [onlyShowFreeStudents, setOnlyShowFreeStudents] = useState(false);
+
+  // In Swap mode
+  const [swapTargetSessionId, setSwapTargetSessionId] = useState<string>('');
+  const [swapSourceStudentId, setSwapSourceStudentId] = useState<string>('');
+  const [swapTargetStudentId, setSwapTargetStudentId] = useState<string>('');
 
   // Calculate maximum total sessions across courses (usually 16)
   const maxSessions = useMemo(() => {
@@ -208,6 +228,144 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const text = generateWeeklyWhatsAppMessage(selectedWeek, courses, sessions, students);
     setEditableWaText(text);
     setIsWaModalOpen(true);
+  };
+
+  // Map of total duties assigned per student across all sessions
+  const studentDutyCountMap = useMemo(() => {
+    const map = new Map<string, number>();
+    sessions.forEach((s) => {
+      s.assignedPjIds.forEach((id) => {
+        map.set(id, (map.get(id) || 0) + 1);
+      });
+    });
+    return map;
+  }, [sessions]);
+
+  // Map of student assignments in this specific selected week
+  const studentWeekAssignmentsMap = useMemo(() => {
+    const map = new Map<string, { courseName: string; day: string; sessionNumber: number }[]>();
+    weekSessions.forEach((s) => {
+      const c = courseMap.get(s.courseId);
+      if (c) {
+        s.assignedPjIds.forEach((id) => {
+          const list = map.get(id) || [];
+          list.push({ courseName: c.name, day: c.day, sessionNumber: s.sessionNumber });
+          map.set(id, list);
+        });
+      }
+    });
+    return map;
+  }, [weekSessions, courseMap]);
+
+  // Active course for swap modal
+  const activeCourseForSwap = useMemo(() => {
+    if (!activeSessionForSwap) return null;
+    return courseMap.get(activeSessionForSwap.courseId) || null;
+  }, [activeSessionForSwap, courseMap]);
+
+  // Other sessions this week for swapping
+  const otherWeekSessionsForSwap = useMemo(() => {
+    if (!activeSessionForSwap) return [];
+    return weekSessions
+      .filter((s) => s.id !== activeSessionForSwap.id)
+      .map((s) => ({
+        session: s,
+        course: courseMap.get(s.courseId),
+      }))
+      .filter(
+        (item): item is { session: SessionSchedule; course: Course } =>
+          Boolean(item.course) && !isPracticumCourse(item.course) && item.session.assignedPjIds.length > 0
+      );
+  }, [activeSessionForSwap, weekSessions, courseMap]);
+
+  const handleOpenSwapModal = (session: SessionSchedule) => {
+    if (!isAdmin) {
+      onRequestLogin?.();
+      return;
+    }
+    setActiveSessionForSwap(session);
+    setSwapTab('replace');
+    setSelectedStudentToReplace(session.assignedPjIds[0] || '');
+    setSwapSourceStudentId(session.assignedPjIds[0] || '');
+    setSearchStudentQuery('');
+    setOnlyShowFreeStudents(false);
+
+    // Pick first available target session if any
+    const otherSessions = weekSessions
+      .filter((s) => s.id !== session.id)
+      .filter((s) => {
+        const c = courseMap.get(s.courseId);
+        return c && !isPracticumCourse(c) && s.assignedPjIds.length > 0;
+      });
+
+    if (otherSessions.length > 0) {
+      setSwapTargetSessionId(otherSessions[0].id);
+      setSwapTargetStudentId(otherSessions[0].assignedPjIds[0] || '');
+    } else {
+      setSwapTargetSessionId('');
+      setSwapTargetStudentId('');
+    }
+
+    setIsSwapModalOpen(true);
+  };
+
+  const handleRemovePjFromSession = (studentId: string) => {
+    if (!activeSessionForSwap || !onUpdateSessions) return;
+    const nextIds = activeSessionForSwap.assignedPjIds.filter((id) => id !== studentId);
+    const updated = sessions.map((s) =>
+      s.id === activeSessionForSwap.id ? { ...s, assignedPjIds: nextIds } : s
+    );
+    onUpdateSessions(updated);
+    setActiveSessionForSwap((prev) => (prev ? { ...prev, assignedPjIds: nextIds } : null));
+    if (selectedStudentToReplace === studentId) {
+      setSelectedStudentToReplace('');
+    }
+  };
+
+  const handleAssignOrReplaceStudent = (newStudentId: string) => {
+    if (!activeSessionForSwap || !onUpdateSessions) return;
+
+    let nextIds = [...activeSessionForSwap.assignedPjIds];
+
+    if (selectedStudentToReplace && nextIds.includes(selectedStudentToReplace)) {
+      // Replace
+      nextIds = nextIds.map((id) => (id === selectedStudentToReplace ? newStudentId : id));
+    } else {
+      // Add if not already assigned
+      if (!nextIds.includes(newStudentId)) {
+        nextIds.push(newStudentId);
+      }
+    }
+
+    const updated = sessions.map((s) =>
+      s.id === activeSessionForSwap.id ? { ...s, assignedPjIds: nextIds } : s
+    );
+    onUpdateSessions(updated);
+    setActiveSessionForSwap((prev) => (prev ? { ...prev, assignedPjIds: nextIds } : null));
+    setSelectedStudentToReplace('');
+  };
+
+  const handleExecuteSwap = () => {
+    if (
+      !activeSessionForSwap ||
+      !swapTargetSessionId ||
+      !swapSourceStudentId ||
+      !swapTargetStudentId ||
+      !onUpdateSessions
+    ) {
+      return;
+    }
+
+    const updated = swapPjBetweenSessions(
+      sessions,
+      activeSessionForSwap.id,
+      swapSourceStudentId,
+      swapTargetSessionId,
+      swapTargetStudentId
+    );
+
+    onUpdateSessions(updated);
+    setIsSwapModalOpen(false);
   };
 
   // Render dedicated Reset Modal
@@ -377,6 +535,483 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
     </div>
   );
+
+  // Render dedicated Swap & Replace PJ Modal
+  const renderSwapModal = () => {
+    if (!isSwapModalOpen || !activeSessionForSwap || !activeCourseForSwap) return null;
+
+    const currentPjStudents = activeSessionForSwap.assignedPjIds
+      .map((id) => studentMap.get(id))
+      .filter((s): s is Student => Boolean(s));
+
+    // Target session object for swap
+    const targetSessionObj = otherWeekSessionsForSwap.find(
+      (item) => item.session.id === swapTargetSessionId
+    );
+    const targetPjStudents = targetSessionObj
+      ? targetSessionObj.session.assignedPjIds
+          .map((id) => studentMap.get(id))
+          .filter((s): s is Student => Boolean(s))
+      : [];
+
+    // Filter students for Tab 1 (Replace/Add)
+    const availableStudents = students
+      .filter((s) => s.isActive)
+      .filter((s) => {
+        if (!searchStudentQuery.trim()) return true;
+        const q = searchStudentQuery.toLowerCase();
+        return s.name.toLowerCase().includes(q) || s.nim.toLowerCase().includes(q);
+      })
+      .filter((s) => {
+        if (!onlyShowFreeStudents) return true;
+        const assignments = studentWeekAssignmentsMap.get(s.id) || [];
+        return assignments.length === 0;
+      })
+      .sort((a, b) => {
+        // Sort students: those who haven't worked this week first, then by least duties
+        const aAssignedThisWeek = (studentWeekAssignmentsMap.get(a.id) || []).length;
+        const bAssignedThisWeek = (studentWeekAssignmentsMap.get(b.id) || []).length;
+        if (aAssignedThisWeek !== bAssignedThisWeek) {
+          return aAssignedThisWeek - bAssignedThisWeek;
+        }
+        const aCount = studentDutyCountMap.get(a.id) || 0;
+        const bCount = studentDutyCountMap.get(b.id) || 0;
+        if (aCount !== bCount) return aCount - bCount;
+        return a.name.localeCompare(b.name);
+      });
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/60 backdrop-blur-xs no-print text-left">
+        <div className="bg-white rounded-2xl max-w-xl w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 max-h-[92vh] flex flex-col">
+          
+          {/* Header */}
+          <div className="flex items-start justify-between border-b border-slate-100 pb-3 shrink-0">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-xs font-bold bg-slate-900 text-white px-2 py-0.5 rounded">
+                  {activeCourseForSwap.code}
+                </span>
+                <h3 className="text-base font-bold text-slate-900 leading-snug">
+                  Tukar / Ganti Penanggung Jawab (PJ)
+                </h3>
+              </div>
+              <p className="text-xs text-slate-600 mt-1 flex flex-wrap items-center gap-x-2.5">
+                <span className="font-semibold text-slate-900">{activeCourseForSwap.name}</span>
+                <span>&bull;</span>
+                <span>{activeCourseForSwap.day}, {activeCourseForSwap.startTime} - {activeCourseForSwap.endTime}</span>
+                <span>&bull;</span>
+                <span>Minggu Ke-{selectedWeek}</span>
+              </p>
+            </div>
+            <button
+              onClick={() => setIsSwapModalOpen(false)}
+              className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer rounded-lg hover:bg-slate-100 transition shrink-0"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Mode Switcher Tabs */}
+          <div className="flex bg-slate-100 p-1 rounded-xl gap-1 shrink-0 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => setSwapTab('replace')}
+              className={`flex-1 py-2 px-3 rounded-lg transition flex items-center justify-center gap-2 cursor-pointer ${
+                swapTab === 'replace'
+                  ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <UserCheck className="w-4 h-4 text-indigo-600" />
+              <span>Ganti / Tambah PJ</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSwapTab('swap')}
+              className={`flex-1 py-2 px-3 rounded-lg transition flex items-center justify-center gap-2 cursor-pointer ${
+                swapTab === 'swap'
+                  ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <ArrowLeftRight className="w-4 h-4 text-amber-600" />
+              <span>Tukar dengan Sesi Lain</span>
+            </button>
+          </div>
+
+          {/* Body Content */}
+          <div className="space-y-4 flex-1 overflow-y-auto pr-1">
+            
+            {/* TAB 1: REPLACE / ADD PJ */}
+            {swapTab === 'replace' && (
+              <div className="space-y-4 text-xs">
+                
+                {/* Current PJs on this session */}
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                      <span>Mahasiswa Bertugas Saat Ini:</span>
+                      <span className="text-[10px] bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-bold">
+                        {currentPjStudents.length} Mahasiswa
+                      </span>
+                    </span>
+                    {selectedStudentToReplace && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedStudentToReplace('')}
+                        className="text-[11px] text-slate-500 hover:text-slate-700 underline cursor-pointer"
+                      >
+                        Batal Pilih Penggantian
+                      </button>
+                    )}
+                  </div>
+
+                  {currentPjStudents.length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {currentPjStudents.map((st) => {
+                        const isSelectedForReplace = selectedStudentToReplace === st.id;
+                        const dutyCount = studentDutyCountMap.get(st.id) || 0;
+
+                        return (
+                          <div
+                            key={st.id}
+                            className={`p-2.5 rounded-xl border transition flex items-center justify-between gap-2 ${
+                              isSelectedForReplace
+                                ? 'bg-indigo-50 border-indigo-300 ring-2 ring-indigo-500 ring-offset-1'
+                                : 'bg-white border-slate-200 hover:border-slate-300'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="w-7 h-7 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
+                                {st.name.charAt(0)}
+                              </div>
+                              <div className="min-w-0 leading-tight">
+                                <span className="font-bold text-slate-900 block truncate">{st.name}</span>
+                                <span className="text-[10px] text-slate-500 font-mono">{st.nim}</span>
+                                <span className="text-[10px] text-indigo-700 font-medium block">
+                                  {dutyCount}x bertugas semester ini
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedStudentToReplace(isSelectedForReplace ? '' : st.id)}
+                                className={`px-2 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                                  isSelectedForReplace
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                                }`}
+                                title="Pilih mahasiswa ini untuk digantikan"
+                              >
+                                {isSelectedForReplace ? 'Akan Diganti' : 'Ganti Ini'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemovePjFromSession(st.id)}
+                                className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg cursor-pointer"
+                                title="Hapus dari sesi ini"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-slate-500 text-xs italic bg-white p-3 rounded-lg border border-dashed border-slate-300 text-center">
+                      Belum ada mahasiswa yang ditugaskan pada sesi ini. Pilih mahasiswa dari daftar di bawah untuk menugaskan.
+                    </div>
+                  )}
+
+                  {selectedStudentToReplace && (
+                    <div className="p-2 bg-indigo-100/60 text-indigo-900 rounded-lg text-[11px] font-medium flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+                      <span>
+                        Pilih satu mahasiswa dari daftar di bawah untuk menggantikan{' '}
+                        <strong>{studentMap.get(selectedStudentToReplace)?.name}</strong>.
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Candidate Student Selection */}
+                <div className="space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <span className="font-bold text-slate-900 text-xs">
+                      {selectedStudentToReplace ? 'Pilih Mahasiswa Pengganti:' : 'Pilih Mahasiswa untuk Ditugaskan:'}
+                    </span>
+
+                    {/* Filter checkbox: Free students this week */}
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-200 transition">
+                      <input
+                        type="checkbox"
+                        checked={onlyShowFreeStudents}
+                        onChange={(e) => setOnlyShowFreeStudents(e.target.checked)}
+                        className="w-3.5 h-3.5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                      />
+                      <span>Hanya yang bebas tugas di Minggu ini</span>
+                    </label>
+                  </div>
+
+                  {/* Search Bar */}
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Cari nama atau NIM mahasiswa..."
+                      value={searchStudentQuery}
+                      onChange={(e) => setSearchStudentQuery(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-600 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* Student Candidates List */}
+                  <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
+                    {availableStudents.length > 0 ? (
+                      availableStudents.map((st) => {
+                        const isAlreadyAssignedToThis = activeSessionForSwap.assignedPjIds.includes(st.id);
+                        const weekAssignments = studentWeekAssignmentsMap.get(st.id) || [];
+                        const isAssignedOtherDaysThisWeek = weekAssignments.length > 0;
+                        const dutyCount = studentDutyCountMap.get(st.id) || 0;
+
+                        return (
+                          <div
+                            key={st.id}
+                            className="p-2.5 hover:bg-slate-50 flex items-center justify-between gap-3 transition"
+                          >
+                            <div className="min-w-0 flex items-center gap-2.5">
+                              <div className="w-7 h-7 rounded-full bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center shrink-0 border border-slate-200">
+                                {st.name.charAt(0)}
+                              </div>
+                              <div className="min-w-0 leading-tight">
+                                <span className="font-semibold text-slate-900 block truncate">{st.name}</span>
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
+                                  <span className="font-mono">{st.nim}</span>
+                                  <span>&bull;</span>
+                                  <span>Total {dutyCount}x tugas</span>
+                                  <span>&bull;</span>
+                                  {isAssignedOtherDaysThisWeek ? (
+                                    <span className="text-amber-700 font-semibold">
+                                      ⚠️ Minggu ini: {weekAssignments.map((a) => `${a.day} (${a.courseName})`).join(', ')}
+                                    </span>
+                                  ) : (
+                                    <span className="text-emerald-700 font-semibold">
+                                      ✓ Bebas tugas minggu ini
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="shrink-0">
+                              {isAlreadyAssignedToThis ? (
+                                <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-lg">
+                                  Sedang Bertugas
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAssignOrReplaceStudent(st.id)}
+                                  className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer flex items-center gap-1"
+                                >
+                                  <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+                                  <span>
+                                    {selectedStudentToReplace ? 'Gantikan' : '+ Jadikan PJ'}
+                                  </span>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="p-4 text-center text-slate-400 text-xs italic">
+                        Tidak ada mahasiswa yang cocok dengan pencarian / filter bebas tugas.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+            {/* TAB 2: SWAP WITH ANOTHER SESSION */}
+            {swapTab === 'swap' && (
+              <div className="space-y-4 text-xs">
+                
+                {/* Step 1: Select Student from Current Session */}
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
+                  <span className="font-bold text-slate-900 block">
+                    1. Pilih Mahasiswa dari Sesi Ini ({activeCourseForSwap.name}):
+                  </span>
+                  {currentPjStudents.length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {currentPjStudents.map((st) => (
+                        <label
+                          key={st.id}
+                          className={`p-2.5 rounded-xl border cursor-pointer flex items-center gap-2.5 transition ${
+                            swapSourceStudentId === st.id
+                              ? 'bg-indigo-50 border-indigo-400 ring-2 ring-indigo-500'
+                              : 'bg-white border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="swapSource"
+                            value={st.id}
+                            checked={swapSourceStudentId === st.id}
+                            onChange={() => setSwapSourceStudentId(st.id)}
+                            className="text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <div className="min-w-0">
+                            <span className="font-bold text-slate-900 block truncate">{st.name}</span>
+                            <span className="text-[10px] text-slate-500 font-mono">{st.nim}</span>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-amber-50 text-amber-800 rounded-lg text-xs">
+                      Sesi ini belum memiliki PJ untuk ditukar. Silakan gunakan tab <strong>"Ganti / Tambah PJ"</strong> terlebih dahulu.
+                    </div>
+                  )}
+                </div>
+
+                {/* Step 2: Select Target Session from this week */}
+                {currentPjStudents.length > 0 && (
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
+                    <span className="font-bold text-slate-900 block">
+                      2. Pilih Sesi Lain di Minggu Ke-{selectedWeek} untuk Ditukar:
+                    </span>
+                    {otherWeekSessionsForSwap.length > 0 ? (
+                      <div className="space-y-2">
+                        <select
+                          value={swapTargetSessionId}
+                          onChange={(e) => {
+                            const newTargetId = e.target.value;
+                            setSwapTargetSessionId(newTargetId);
+                            const found = otherWeekSessionsForSwap.find((item) => item.session.id === newTargetId);
+                            if (found && found.session.assignedPjIds.length > 0) {
+                              setSwapTargetStudentId(found.session.assignedPjIds[0]);
+                            } else {
+                              setSwapTargetStudentId('');
+                            }
+                          }}
+                          className="w-full p-2.5 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-slate-900 focus:outline-none"
+                        >
+                          {otherWeekSessionsForSwap.map(({ session, course }) => (
+                            <option key={session.id} value={session.id}>
+                              {course.day} ({course.startTime}) &mdash; {course.name} ({session.assignedPjIds.length} PJ)
+                            </option>
+                          ))}
+                        </select>
+
+                        {/* Step 3: Select Target Student */}
+                        {targetPjStudents.length > 0 && (
+                          <div className="pt-2">
+                            <span className="text-[11px] font-semibold text-slate-700 block mb-1.5">
+                              Pilih Mahasiswa dari Sesi Tujuan:
+                            </span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {targetPjStudents.map((st) => (
+                                <label
+                                  key={st.id}
+                                  className={`p-2.5 rounded-xl border cursor-pointer flex items-center gap-2.5 transition ${
+                                    swapTargetStudentId === st.id
+                                      ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-500'
+                                      : 'bg-white border-slate-200 hover:border-slate-300'
+                                  }`}
+                                >
+                                  <input
+                                    type="radio"
+                                    name="swapTarget"
+                                    value={st.id}
+                                    checked={swapTargetStudentId === st.id}
+                                    onChange={() => setSwapTargetStudentId(st.id)}
+                                    className="text-amber-600 focus:ring-amber-500"
+                                  />
+                                  <div className="min-w-0">
+                                    <span className="font-bold text-slate-900 block truncate">{st.name}</span>
+                                    <span className="text-[10px] text-slate-500 font-mono">{st.nim}</span>
+                                  </div>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-amber-50 text-amber-800 rounded-lg text-xs">
+                        Tidak ada sesi perkuliahan lain di minggu ini yang memiliki PJ untuk ditukar.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Preview Box */}
+                {swapSourceStudentId && swapTargetStudentId && targetSessionObj && (
+                  <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-xl space-y-2">
+                    <span className="text-[11px] font-bold text-indigo-950 uppercase tracking-wider block">
+                      Pratinjau Pertukaran Tugas:
+                    </span>
+                    <div className="flex items-center justify-between gap-3 text-xs bg-white p-3 rounded-lg border border-indigo-200">
+                      <div className="text-left leading-tight">
+                        <span className="font-bold text-indigo-950 block">
+                          {studentMap.get(swapSourceStudentId)?.name}
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          Pindah ke: {targetSessionObj.course.day} ({targetSessionObj.course.name})
+                        </span>
+                      </div>
+                      <ArrowLeftRight className="w-5 h-5 text-indigo-600 shrink-0" />
+                      <div className="text-right leading-tight">
+                        <span className="font-bold text-amber-950 block">
+                          {studentMap.get(swapTargetStudentId)?.name}
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          Pindah ke: {activeCourseForSwap.day} ({activeCourseForSwap.name})
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Action button */}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    disabled={!swapSourceStudentId || !swapTargetStudentId}
+                    onClick={handleExecuteSwap}
+                    className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <ArrowLeftRight className="w-4 h-4" />
+                    <span>Konfirmasi & Tukar Posisi PJ</span>
+                  </button>
+                </div>
+
+              </div>
+            )}
+
+          </div>
+
+          {/* Footer */}
+          <div className="pt-3 border-t border-slate-100 flex justify-end shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsSwapModalOpen(false)}
+              className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer transition"
+            >
+              Tutup
+            </button>
+          </div>
+
+        </div>
+      </div>
+    );
+  };
 
   // If no courses added yet
   if (courses.length === 0) {
@@ -725,10 +1360,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <div className="flex flex-col sm:flex-row sm:items-center gap-3 shrink-0 pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100">
                           
                           {/* PJ Mahasiswa Badges */}
-                          <div className="space-y-1">
-                            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-                              Penanggung Jawab (PJ):
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                                Penanggung Jawab (PJ):
+                              </div>
+                              {!isPracticumCourse(course) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenSwapModal(session)}
+                                  className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-md border border-indigo-200 transition cursor-pointer"
+                                  title="Tukar atau ganti penanggung jawab sesi ini"
+                                >
+                                  <ArrowLeftRight className="w-3 h-3 text-indigo-600" />
+                                  <span>Tukar / Ganti PJ</span>
+                                </button>
+                              )}
                             </div>
+
                             {assignedStudents.length > 0 ? (
                               <div className="flex flex-wrap gap-1.5">
                                 {assignedStudents.map((st) => (
@@ -752,10 +1401,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                 <span className="font-semibold">Praktikum (Tanpa PJ)</span>
                               </div>
                             ) : (
-                              <div className="inline-flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
-                                <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
-                                <span>Belum ada PJ</span>
-                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenSwapModal(session)}
+                                className="inline-flex items-center gap-1.5 text-xs text-amber-800 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 px-2.5 py-1.5 rounded-lg border border-amber-300 font-semibold cursor-pointer transition"
+                              >
+                                <UserPlus className="w-3.5 h-3.5 text-amber-600" />
+                                <span>Belum ada PJ (Klik untuk Menugaskan)</span>
+                              </button>
                             )}
                           </div>
 
@@ -1017,6 +1670,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Reset Confirmation Modal */}
       {isResetModalOpen && renderResetModal()}
+
+      {/* Swap / Replace PJ Modal */}
+      {renderSwapModal()}
 
     </div>
   );

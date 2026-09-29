@@ -291,12 +291,11 @@ export function generateGlobalRotationSchedule(
 
       let candidate = studentPool[poolIndex];
       let searchAttempts = 0;
+      const canAvoidSameWeek = assignedThisWeek.size < activeStudents.length;
 
       while (
         (assignedIds.includes(candidate.id) ||
-          (activeStudents.length > count * 2 &&
-            assignedThisWeek.has(candidate.id) &&
-            searchAttempts < Math.floor(studentPool.length / 2))) &&
+          (canAvoidSameWeek && assignedThisWeek.has(candidate.id))) &&
         searchAttempts < studentPool.length
       ) {
         poolIndex = (poolIndex + 1) % studentPool.length;
