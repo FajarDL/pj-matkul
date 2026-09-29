@@ -212,10 +212,56 @@ export function App() {
     showToast('Mata kuliah berhasil dihapus');
   };
 
+  // Delete all courses (keeps students intact, clears sessions)
+  const handleDeleteAllCourses = (skipConfirm: boolean = false) => {
+    if (data.courses.length === 0) {
+      showToast('Tidak ada mata kuliah yang terdaftar');
+      return;
+    }
+    if (
+      skipConfirm ||
+      confirm(
+        `Apakah Anda yakin ingin menghapus SELURUH mata kuliah (${data.courses.length} mata kuliah)?\n\nSeluruh jadwal sesi dan rotasi PJ yang terkait akan dihapus. Data mahasiswa akan tetap aman.`
+      )
+    ) {
+      setData((prev) => ({
+        ...prev,
+        courses: [],
+        sessions: [],
+        activeCourseId: null,
+      }));
+      showToast('Seluruh mata kuliah dan jadwal berhasil dihapus');
+    }
+  };
+
   // Handlers for Students
   const handleUpdateStudents = (newStudents: Student[]) => {
     setData((prev) => ({ ...prev, students: newStudents }));
     showToast('Data mahasiswa berhasil diperbarui');
+  };
+
+  // Delete all students (keeps courses intact, unassigns PJs from sessions)
+  const handleDeleteAllStudents = (skipConfirm: boolean = false) => {
+    if (data.students.length === 0) {
+      showToast('Tidak ada data mahasiswa yang terdaftar');
+      return;
+    }
+    if (
+      skipConfirm ||
+      confirm(
+        `Apakah Anda yakin ingin menghapus SELURUH mahasiswa (${data.students.length} mahasiswa)?\n\nDaftar mata kuliah dan jadwal akan tetap aman, namun seluruh penugasan PJ pada jadwal akan dikosongkan.`
+      )
+    ) {
+      setData((prev) => ({
+        ...prev,
+        students: [],
+        sessions: prev.sessions.map((s) => ({
+          ...s,
+          assignedPjIds: [],
+        })),
+      }));
+      showToast('Seluruh data mahasiswa berhasil dihapus');
+    }
   };
 
   // Handlers for Sessions
@@ -338,6 +384,7 @@ export function App() {
             activeCourseId={activeCourse?.id || null}
             userRole={authSession.role}
             onUpdateStudents={handleUpdateStudents}
+            onDeleteAllStudents={() => handleDeleteAllStudents()}
             onRequestLogin={() => setIsLoginModalOpen(true)}
           />
         )}
@@ -354,6 +401,7 @@ export function App() {
             }}
             onUpdateCourses={handleUpdateCourses}
             onDeleteCourse={handleDeleteCourse}
+            onDeleteAllCourses={() => handleDeleteAllCourses()}
             onAddCourseWithPreset={handleAddCourseWithPreset}
             onBatchImportCourses={handleBatchImportCourses}
             onRequestLogin={() => setIsLoginModalOpen(true)}
@@ -380,6 +428,8 @@ export function App() {
             }}
             onRequestLogin={() => setIsLoginModalOpen(true)}
             onReset={() => handleReset(true)}
+            onDeleteAllCourses={() => handleDeleteAllCourses(true)}
+            onDeleteAllStudents={() => handleDeleteAllStudents(true)}
           />
         )}
 

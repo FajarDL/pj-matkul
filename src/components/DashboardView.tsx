@@ -46,6 +46,8 @@ interface DashboardViewProps {
   onOpenGlobalRotationModal?: () => void;
   onRequestLogin?: () => void;
   onReset?: () => void;
+  onDeleteAllCourses?: () => void;
+  onDeleteAllStudents?: () => void;
 }
 
 const DAYS_OF_WEEK = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -63,6 +65,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenGlobalRotationModal,
   onRequestLogin: _onRequestLogin,
   onReset,
+  onDeleteAllCourses,
+  onDeleteAllStudents,
 }) => {
   const [copiedSessionId, setCopiedSessionId] = useState<string | null>(null);
   const [copiedWeekDigest, setCopiedWeekDigest] = useState(false);
@@ -233,31 +237,71 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         <div className="space-y-3 pt-1">
-          {/* Option 1: Reset Perkuliahan & Mahasiswa */}
+          {/* Option 1: Hapus Seluruh Mata Kuliah Saja */}
           <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100/70 transition space-y-2">
             <div className="flex items-start gap-2.5">
-              <Trash2 className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
+              <BookOpen className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
               <div>
                 <h4 className="text-xs font-bold text-slate-900">
-                  Reset Jadwal Perkuliahan & Mahasiswa
+                  Hapus Seluruh Mata Kuliah Saja
                 </h4>
                 <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
-                  Menghapus seluruh daftar mata kuliah, jadwal mingguan, sesi rotasi PJ, dan daftar mahasiswa dari penyimpanan lokal browser. Kunci akses Anda tetap aman.
+                  Menghapus seluruh daftar mata kuliah ({courses.length}), jadwal mingguan, dan sesi rotasi PJ. Data daftar mahasiswa tetap aman tersimpan.
                 </p>
               </div>
             </div>
             <button
               type="button"
+              disabled={courses.length === 0}
               onClick={() => {
-                if (confirm('Apakah Anda yakin ingin menghapus seluruh data jadwal perkuliahan dan mahasiswa?')) {
+                if (courses.length === 0) return;
+                if (
+                  confirm(
+                    `Apakah Anda yakin ingin menghapus SELURUH mata kuliah (${courses.length} mata kuliah)?\n\nSeluruh jadwal sesi dan rotasi PJ yang terkait akan dihapus. Data mahasiswa akan tetap aman.`
+                  )
+                ) {
                   setIsResetModalOpen(false);
-                  onReset?.();
+                  onDeleteAllCourses?.();
                 }
               }}
-              className="w-full mt-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer"
+              className="w-full mt-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span>Hapus Jadwal & Mahasiswa</span>
+              <span>Hapus Semua Mata Kuliah ({courses.length})</span>
+            </button>
+          </div>
+
+          {/* Option 2: Hapus Seluruh Mahasiswa Saja */}
+          <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100/70 transition space-y-2">
+            <div className="flex items-start gap-2.5">
+              <Users className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
+              <div>
+                <h4 className="text-xs font-bold text-slate-900">
+                  Hapus Seluruh Mahasiswa Saja
+                </h4>
+                <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
+                  Menghapus seluruh data mahasiswa ({students.length}) dan mengosongkan penugasan PJ. Daftar mata kuliah dan jadwal sesi tetap aman tersimpan.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={students.length === 0}
+              onClick={() => {
+                if (students.length === 0) return;
+                if (
+                  confirm(
+                    `Apakah Anda yakin ingin menghapus SELURUH mahasiswa (${students.length} mahasiswa)?\n\nDaftar mata kuliah dan jadwal akan tetap aman, namun seluruh penugasan PJ pada jadwal akan dikosongkan.`
+                  )
+                ) {
+                  setIsResetModalOpen(false);
+                  onDeleteAllStudents?.();
+                }
+              }}
+              className="w-full mt-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Hapus Semua Mahasiswa ({students.length})</span>
             </button>
           </div>
 
