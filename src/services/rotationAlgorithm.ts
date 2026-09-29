@@ -323,43 +323,29 @@ export function swapPjBetweenSessions(
 }
 
 /**
- * Generate formatted WhatsApp broadcast message for a single class session (compact & neat)
+ * Generate formatted WhatsApp broadcast message for a single class session (ultra-compact)
  */
 export function generateWhatsAppMessage(
   courseName: string,
-  lecturer: string,
+  _lecturer: string,
   day: string,
   time: string,
   room: string,
   session: SessionSchedule,
   assignedStudents: Student[]
 ): string {
-  const pjList = assignedStudents.length > 0
-    ? assignedStudents.map((s) => `*${s.name}* (${s.nim})`).join(', ')
-    : '_(Belum ditentukan)_';
+  const pjs = assignedStudents.length > 0
+    ? assignedStudents.map((s) => s.name).join(', ')
+    : 'Belum ada PJ';
 
-  const dateFormatted = new Date(session.date).toLocaleDateString('id-ID', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
+  const roomInfo = room ? `, ${room}` : '';
 
-  return `📢 *PENGINGAT PJ PERKULIAHAN*
-━━━━━━━━━━━━━━━━━━━━
-📚 *${courseName}* (Pertemuan ${session.sessionNumber})
-🗓️ ${day}, ${dateFormatted} | ⏰ ${time} WIB
-📍 Ruang: ${room || '-'}
-👨‍🏫 Dosen: ${lecturer || '-'}
-🎯 Materi: ${session.topic}
-
-👤 *PJ Bertugas:* ${pjList}
-${session.notes ? `📝 *Catatan:* ${session.notes}\n` : ''}
-⚠️ *Tugas PJ:* Konfirmasi kehadiran dosen H-1, siapkan ruang/proyektor, & dampingi presensi. Terima kasih! 🙏✨`;
+  return `*PJ ${courseName} (M-${session.sessionNumber})*\n🗓️ ${day} (${time}${roomInfo})\n👤 PJ: ${pjs}`;
 }
 
 /**
- * Generate clean, compact, and neat WhatsApp digest for an entire week across all courses.
- * Designed specifically for WhatsApp class groups (readable in 1 screen, simple, no clutter).
+ * Generate ultra-compact and simple WhatsApp schedule digest for an entire week.
+ * 1 line per course so it's super short, neat, and easy to copy-paste into chat.
  */
 export function generateWeeklyWhatsAppMessage(
   weekNumber: number,
@@ -382,11 +368,10 @@ export function generateWeeklyWhatsAppMessage(
   });
 
   if (sorted.length === 0) {
-    return `📋 *JADWAL KULIAH & PJ MINGGU KE-${weekNumber}*\n\nTidak ada perkuliahan terjadwal untuk minggu ini.`;
+    return `*Jadwal & PJ Minggu Ke-${weekNumber}*\n(Tidak ada perkuliahan minggu ini)`;
   }
 
-  let message = `📋 *JADWAL KULIAH & PJ MINGGU KE-${weekNumber}*\n`;
-  message += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
+  let message = `*Jadwal & PJ Minggu Ke-${weekNumber}*\n`;
 
   let currentDay = '';
   sorted.forEach((session) => {
@@ -394,8 +379,8 @@ export function generateWeeklyWhatsAppMessage(
     if (!course) return;
 
     if (course.day.trim().toLowerCase() !== currentDay.trim().toLowerCase()) {
-      currentDay = course.day;
-      message += `🗓️ *${currentDay.toUpperCase()}*\n`;
+      currentDay = course.day.trim();
+      message += `\n*${currentDay}*\n`;
     }
 
     const pjs = session.assignedPjIds
@@ -403,15 +388,12 @@ export function generateWeeklyWhatsAppMessage(
       .filter(Boolean)
       .join(', ');
 
-    const timeStr = `${course.startTime} - ${course.endTime}`;
-    const roomStr = course.room ? ` | ${course.room}` : '';
+    const timeRoom = course.room 
+      ? `${course.startTime}, ${course.room}`
+      : `${course.startTime}`;
 
-    message += `• *${course.name}* (${timeStr}${roomStr})\n`;
-    message += `  PJ: ${pjs ? `*${pjs}*` : '_Belum ada PJ_'}\n\n`;
+    message += `• ${course.name} (${timeRoom}): ${pjs || 'Belum ada PJ'}\n`;
   });
 
-  message += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  message += `⚠️ *Catatan:* PJ mohon konfirmasi dosen H-1 & siapkan kelas. Semangat! ✨`;
-
-  return message;
+  return message.trim();
 }
