@@ -60,6 +60,8 @@ export interface SessionSchedule {
   date: string; // YYYY-MM-DD
   topic: string;
   assignedPjIds: string[]; // List of Student IDs
+  originalPjIds?: string[]; // Snapshot of original generated PJ IDs
+  isManuallyEdited?: boolean; // Flag if manually swapped or replaced
   notes?: string;
   status: SessionStatus;
 }

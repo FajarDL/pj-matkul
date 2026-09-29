@@ -123,6 +123,8 @@ export function generateRotationSchedule(
       date: existing?.date || dateStr,
       topic,
       assignedPjIds: assignedIds,
+      originalPjIds: assignedIds,
+      isManuallyEdited: false,
       notes,
       status,
     });
@@ -311,6 +313,8 @@ export function generateGlobalRotationSchedule(
     return {
       ...session,
       assignedPjIds: assignedIds,
+      originalPjIds: assignedIds,
+      isManuallyEdited: false,
     };
   });
 
@@ -329,12 +333,44 @@ export function swapPjBetweenSessions(
 ): SessionSchedule[] {
   return sessions.map((session) => {
     if (session.id === sessionAId) {
+      const originalPjIds = session.originalPjIds !== undefined ? session.originalPjIds : [...session.assignedPjIds];
       const newPjs = session.assignedPjIds.map((id) => (id === studentAId ? studentBId : id));
-      return { ...session, assignedPjIds: newPjs };
+      return {
+        ...session,
+        originalPjIds,
+        assignedPjIds: newPjs,
+        isManuallyEdited: true,
+      };
     }
     if (session.id === sessionBId) {
+      const originalPjIds = session.originalPjIds !== undefined ? session.originalPjIds : [...session.assignedPjIds];
       const newPjs = session.assignedPjIds.map((id) => (id === studentBId ? studentAId : id));
-      return { ...session, assignedPjIds: newPjs };
+      return {
+        ...session,
+        originalPjIds,
+        assignedPjIds: newPjs,
+        isManuallyEdited: true,
+      };
+    }
+    return session;
+  });
+}
+
+/**
+ * Reverts a session's assigned PJ back to its original rotation PJ
+ */
+export function revertSessionToOriginal(
+  sessions: SessionSchedule[],
+  sessionId: string
+): SessionSchedule[] {
+  return sessions.map((session) => {
+    if (session.id === sessionId) {
+      const targetPjIds = session.originalPjIds ? [...session.originalPjIds] : [...session.assignedPjIds];
+      return {
+        ...session,
+        assignedPjIds: targetPjIds,
+        isManuallyEdited: false,
+      };
     }
     return session;
   });

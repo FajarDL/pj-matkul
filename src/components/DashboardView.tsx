@@ -5,7 +5,8 @@ import {
   generateWeeklyWhatsAppMessage, 
   getDayOrder,
   isPracticumCourse,
-  swapPjBetweenSessions
+  swapPjBetweenSessions,
+  revertSessionToOriginal
 } from '../services/rotationAlgorithm';
 import { 
   Calendar, 
@@ -33,7 +34,9 @@ import {
   ShieldAlert,
   ArrowLeftRight,
   UserCheck,
-  UserPlus
+  UserPlus,
+  Undo2,
+  History
 } from 'lucide-react';
 import { authService } from '../services/authService';
 
@@ -53,6 +56,12 @@ interface DashboardViewProps {
   onDeleteAllCourses?: () => void;
   onDeleteAllStudents?: () => void;
   onUpdateSessions?: (sessions: SessionSchedule[]) => void;
+}
+
+interface UndoToastState {
+  message: string;
+  previousSessions: SessionSchedule[];
+  timerId?: ReturnType<typeof setTimeout>;
 }
 
 const DAYS_OF_WEEK = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -94,6 +103,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [swapTargetSessionId, setSwapTargetSessionId] = useState<string>('');
   const [swapSourceStudentId, setSwapSourceStudentId] = useState<string>('');
   const [swapTargetStudentId, setSwapTargetStudentId] = useState<string>('');
+
+  // Undo Toast Notification State
+  const [undoToast, setUndoToast] = useState<UndoToastState | null>(null);
 
   // Calculate maximum total sessions across courses (usually 16)
   const maxSessions = useMemo(() => {
@@ -309,21 +321,107 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setIsSwapModalOpen(true);
   };
 
+  // Trigger Undo Toast notification with 8-second auto-dismiss
+  const triggerUndoToast = (message: string, previousSessions: SessionSchedule[]) => {
+    if (undoToast?.timerId) {
+      clearTimeout(undoToast.timerId);
+    }
+    const timer = setTimeout(() => {
+      setUndoToast(null);
+    }, 8000);
+
+    setUndoToast({
+      message,
+      previousSessions,
+      timerId: timer,
+    });
+  };
+
+  // Revert/Undo last action
+  const handleUndo = () => {
+    if (!undoToast || !onUpdateSessions) return;
+    if (undoToast.timerId) {
+      clearTimeout(undoToast.timerId);
+    }
+    const restoredSessions = undoToast.previousSessions;
+    onUpdateSessions(restoredSessions);
+
+    if (activeSessionForSwap) {
+      const match = restoredSessions.find((s) => s.id === activeSessionForSwap.id);
+      if (match) {
+        setActiveSessionForSwap(match);
+      }
+    }
+    setUndoToast(null);
+  };
+
+  // Revert a session back to original rotation PJ
+  const handleRevertToOriginal = (sessionId: string) => {
+    if (!isAdmin) {
+      onRequestLogin?.();
+      return;
+    }
+    if (!onUpdateSessions) return;
+
+    const targetSession = sessions.find((s) => s.id === sessionId);
+    if (!targetSession) return;
+
+    const previousSessions = [...sessions];
+    const updated = revertSessionToOriginal(sessions, sessionId);
+    onUpdateSessions(updated);
+
+    const updatedSession = updated.find((s) => s.id === sessionId);
+    if (updatedSession && activeSessionForSwap?.id === sessionId) {
+      setActiveSessionForSwap(updatedSession);
+    }
+
+    const c = courseMap.get(targetSession.courseId);
+    triggerUndoToast(
+      `PJ sesi ${c?.name || ''} berhasil dikembalikan ke jadwal rotasi awal`,
+      previousSessions
+    );
+  };
+
   const handleRemovePjFromSession = (studentId: string) => {
     if (!activeSessionForSwap || !onUpdateSessions) return;
+    const previousSessions = [...sessions];
+    const originalPjIds =
+      activeSessionForSwap.originalPjIds !== undefined
+        ? activeSessionForSwap.originalPjIds
+        : [...activeSessionForSwap.assignedPjIds];
+
     const nextIds = activeSessionForSwap.assignedPjIds.filter((id) => id !== studentId);
+    const updatedSession: SessionSchedule = {
+      ...activeSessionForSwap,
+      originalPjIds,
+      assignedPjIds: nextIds,
+      isManuallyEdited: true,
+    };
+
     const updated = sessions.map((s) =>
-      s.id === activeSessionForSwap.id ? { ...s, assignedPjIds: nextIds } : s
+      s.id === activeSessionForSwap.id ? updatedSession : s
     );
     onUpdateSessions(updated);
-    setActiveSessionForSwap((prev) => (prev ? { ...prev, assignedPjIds: nextIds } : null));
+    setActiveSessionForSwap(updatedSession);
     if (selectedStudentToReplace === studentId) {
       setSelectedStudentToReplace('');
     }
+
+    const st = studentMap.get(studentId);
+    const c = activeCourseForSwap;
+    triggerUndoToast(
+      `PJ ${st?.name || ''} dicopot dari ${c?.name || 'sesi'}`,
+      previousSessions
+    );
   };
 
   const handleAssignOrReplaceStudent = (newStudentId: string) => {
     if (!activeSessionForSwap || !onUpdateSessions) return;
+    const previousSessions = [...sessions];
+    const originalPjIds =
+      activeSessionForSwap.originalPjIds !== undefined
+        ? activeSessionForSwap.originalPjIds
+        : [...activeSessionForSwap.assignedPjIds];
 
     let nextIds = [...activeSessionForSwap.assignedPjIds];
 
@@ -337,12 +435,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       }
     }
 
+    const updatedSession: SessionSchedule = {
+      ...activeSessionForSwap,
+      originalPjIds,
+      assignedPjIds: nextIds,
+      isManuallyEdited: true,
+    };
+
     const updated = sessions.map((s) =>
-      s.id === activeSessionForSwap.id ? { ...s, assignedPjIds: nextIds } : s
+      s.id === activeSessionForSwap.id ? updatedSession : s
     );
     onUpdateSessions(updated);
-    setActiveSessionForSwap((prev) => (prev ? { ...prev, assignedPjIds: nextIds } : null));
+    setActiveSessionForSwap(updatedSession);
     setSelectedStudentToReplace('');
+
+    const newStudent = studentMap.get(newStudentId);
+    const c = activeCourseForSwap;
+    triggerUndoToast(
+      `PJ ${c?.name || 'sesi'} diganti ke ${newStudent?.name || ''}`,
+      previousSessions
+    );
   };
 
   const handleExecuteSwap = () => {
@@ -356,6 +468,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       return;
     }
 
+    const previousSessions = [...sessions];
     const updated = swapPjBetweenSessions(
       sessions,
       activeSessionForSwap.id,
@@ -366,6 +479,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
     onUpdateSessions(updated);
     setIsSwapModalOpen(false);
+
+    const cA = courseMap.get(activeSessionForSwap.courseId)?.name || 'Sesi 1';
+    const cB =
+      courseMap.get(sessions.find((s) => s.id === swapTargetSessionId)?.courseId || '')?.name ||
+      'Sesi 2';
+    triggerUndoToast(
+      `Rotasi PJ antara ${cA} dan ${cB} berhasil ditukar`,
+      previousSessions
+    );
   };
 
   // Render dedicated Reset Modal
@@ -642,6 +764,64 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {/* Body Content */}
           <div className="space-y-4 flex-1 overflow-y-auto pr-1">
             
+            {/* Original PJ Status & Quick Revert Banner */}
+            {(() => {
+              const originalIds = activeSessionForSwap.originalPjIds || activeSessionForSwap.assignedPjIds;
+              const originalStudents = originalIds
+                .map((id) => studentMap.get(id))
+                .filter((s): s is Student => Boolean(s));
+
+              const isDifferent =
+                activeSessionForSwap.isManuallyEdited ||
+                (activeSessionForSwap.originalPjIds &&
+                  JSON.stringify(activeSessionForSwap.originalPjIds) !==
+                    JSON.stringify(activeSessionForSwap.assignedPjIds));
+
+              if (isDifferent) {
+                return (
+                  <div className="bg-amber-50/90 border border-amber-300 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                        <History className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>Sesi Ini Pernah Mengalami Perubahan Manual</span>
+                      </div>
+                      <p className="text-[11px] text-amber-800 leading-snug">
+                        PJ Asli Rotasi Awal:{' '}
+                        <span className="font-semibold text-slate-900">
+                          {originalStudents.length > 0
+                            ? originalStudents.map((s) => s.name).join(', ')
+                            : 'Belum Ditugaskan'}
+                        </span>
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRevertToOriginal(activeSessionForSwap.id)}
+                      className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer shrink-0"
+                      title="Kembalikan penugasan PJ sesi ini ke jadwal rotasi awal"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Kembalikan ke PJ Semula</span>
+                    </button>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 flex items-center justify-between text-[11px] text-slate-600">
+                  <div className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Sesuai rotasi otomatis awal</span>
+                  </div>
+                  {originalStudents.length > 0 && (
+                    <span className="text-slate-500 font-medium truncate max-w-[200px] sm:max-w-xs">
+                      PJ: {originalStudents.map((s) => s.name).join(', ')}
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* TAB 1: REPLACE / ADD PJ */}
             {swapTab === 'replace' && (
               <div className="space-y-4 text-xs">
@@ -773,6 +953,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     {availableStudents.length > 0 ? (
                       availableStudents.map((st) => {
                         const isAlreadyAssignedToThis = activeSessionForSwap.assignedPjIds.includes(st.id);
+                        const isOriginalPjOfThis = (activeSessionForSwap.originalPjIds || []).includes(st.id);
                         const weekAssignments = studentWeekAssignmentsMap.get(st.id) || [];
                         const isAssignedOtherDaysThisWeek = weekAssignments.length > 0;
                         const dutyCount = studentDutyCountMap.get(st.id) || 0;
@@ -780,14 +961,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         return (
                           <div
                             key={st.id}
-                            className="p-2.5 hover:bg-slate-50 flex items-center justify-between gap-3 transition"
+                            className={`p-2.5 hover:bg-slate-50 flex items-center justify-between gap-3 transition ${
+                              isOriginalPjOfThis && !isAlreadyAssignedToThis ? 'bg-amber-50/40' : ''
+                            }`}
                           >
                             <div className="min-w-0 flex items-center gap-2.5">
                               <div className="w-7 h-7 rounded-full bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center shrink-0 border border-slate-200">
                                 {st.name.charAt(0)}
                               </div>
                               <div className="min-w-0 leading-tight">
-                                <span className="font-semibold text-slate-900 block truncate">{st.name}</span>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-semibold text-slate-900 block truncate">{st.name}</span>
+                                  {isOriginalPjOfThis && (
+                                    <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded">
+                                      ★ PJ Asli Rotasi
+                                    </span>
+                                  )}
+                                </div>
                                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
                                   <span className="font-mono">{st.nim}</span>
                                   <span>&bull;</span>
@@ -1361,22 +1551,60 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           
                           {/* PJ Mahasiswa Badges */}
                           <div className="space-y-1.5">
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-                                Penanggung Jawab (PJ):
-                              </div>
-                              {!isPracticumCourse(course) && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenSwapModal(session)}
-                                  className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-md border border-indigo-200 transition cursor-pointer"
-                                  title="Tukar atau ganti penanggung jawab sesi ini"
-                                >
-                                  <ArrowLeftRight className="w-3 h-3 text-indigo-600" />
-                                  <span>Tukar / Ganti PJ</span>
-                                </button>
-                              )}
-                            </div>
+                            {(() => {
+                              const isManuallyEdited =
+                                session.isManuallyEdited ||
+                                (session.originalPjIds &&
+                                  JSON.stringify(session.originalPjIds) !==
+                                    JSON.stringify(session.assignedPjIds));
+
+                              const originalPjNames = (session.originalPjIds || [])
+                                .map((id) => studentMap.get(id)?.name)
+                                .filter(Boolean)
+                                .join(', ');
+
+                              return (
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                                      Penanggung Jawab (PJ):
+                                    </span>
+                                    {isManuallyEdited && (
+                                      <span
+                                        className="text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 px-1.5 py-0.2 rounded"
+                                        title={`Diedit manual. PJ asli rotasi: ${originalPjNames || 'Belum ada'}`}
+                                      >
+                                        ✏️ Diedit Manual
+                                      </span>
+                                    )}
+                                  </div>
+                                  {!isPracticumCourse(course) && (
+                                    <div className="flex items-center gap-1.5">
+                                      {isManuallyEdited && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRevertToOriginal(session.id)}
+                                          className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300 transition cursor-pointer"
+                                          title={`Kembalikan ke PJ asli rotasi (${originalPjNames || 'rotasi awal'})`}
+                                        >
+                                          <RotateCcw className="w-3 h-3 text-amber-600" />
+                                          <span className="hidden sm:inline">PJ Asli</span>
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenSwapModal(session)}
+                                        className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 px-2 py-0.5 rounded-md border border-indigo-200 transition cursor-pointer"
+                                        title="Tukar atau ganti penanggung jawab sesi ini"
+                                      >
+                                        <ArrowLeftRight className="w-3 h-3 text-indigo-600" />
+                                        <span>Tukar / Ganti</span>
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
 
                             {assignedStudents.length > 0 ? (
                               <div className="flex flex-wrap gap-1.5">
@@ -1673,6 +1901,41 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Swap / Replace PJ Modal */}
       {renderSwapModal()}
+
+      {/* Floating Undo Toast Notification */}
+      {undoToast && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-200 no-print">
+          <div className="bg-slate-900 text-white px-4 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-3 max-w-md">
+            <div className="w-8 h-8 rounded-full bg-indigo-500/20 text-indigo-300 flex items-center justify-center shrink-0">
+              <History className="w-4 h-4 text-indigo-400" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-slate-100 truncate">
+                {undoToast.message}
+              </p>
+              <p className="text-[10px] text-slate-400">
+                Salah klik? Anda dapat mengurungkannya sekarang
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleUndo}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-xs transition cursor-pointer shrink-0"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+              <span>Urungkan</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setUndoToast(null)}
+              className="text-slate-400 hover:text-slate-200 p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer shrink-0"
+              title="Tutup pemberitahuan"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );
