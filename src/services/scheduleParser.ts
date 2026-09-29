@@ -167,7 +167,19 @@ export function parseWebSchedule(rawText: string): ParsedScheduleCourse[] {
     results.push(finalizeParsedCourse(currentCourse));
   }
 
-  return results;
+  // Deduplicate entries within the pasted text
+  const uniqueResults: ParsedScheduleCourse[] = [];
+  const seen = new Set<string>();
+
+  for (const item of results) {
+    const key = `${item.code.trim().toUpperCase()}:::${item.name.trim().toLowerCase()}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueResults.push(item);
+    }
+  }
+
+  return uniqueResults;
 }
 
 function finalizeParsedCourse(c: Partial<ParsedScheduleCourse>): ParsedScheduleCourse {

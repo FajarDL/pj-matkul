@@ -10,6 +10,7 @@ import { CourseManager } from './components/CourseManager';
 import { PrintScheduleView } from './components/PrintScheduleView';
 import { LoginModal } from './components/LoginModal';
 import { SecuritySettingsModal } from './components/SecuritySettingsModal';
+import { checkCourseDuplicate } from './services/scheduleValidation';
 import { CheckCircle2 } from 'lucide-react';
 
 export function App() {
@@ -73,6 +74,12 @@ export function App() {
 
   // Add course with curriculum preset (autofills syllabus topics for 16 sessions)
   const handleAddCourseWithPreset = (newCourse: Course, topics: string[]) => {
+    const dupCheck = checkCourseDuplicate(newCourse, data.courses);
+    if (dupCheck.isDuplicate) {
+      alert(`Gagal menambahkan: ${dupCheck.message}`);
+      return;
+    }
+
     const today = new Date();
     const newSessions: SessionSchedule[] = [];
 
@@ -128,8 +135,28 @@ export function App() {
     const timestamp = Date.now();
     const createdCourses: Course[] = [];
     const allSessions: SessionSchedule[] = [];
+    let skippedDuplicates = 0;
 
-    newCourses.forEach((c, cIdx) => {
+    // Filter duplicates against existing data.courses and within the newCourses batch
+    const candidateCourses: Omit<Course, 'id'>[] = [];
+    const tempExisting: Course[] = [...data.courses];
+
+    for (const c of newCourses) {
+      const existingCheck = checkCourseDuplicate(c, tempExisting);
+      if (existingCheck.isDuplicate) {
+        skippedDuplicates++;
+        continue;
+      }
+      candidateCourses.push(c);
+      tempExisting.push({ ...c, id: `temp-${candidateCourses.length}` });
+    }
+
+    if (candidateCourses.length === 0) {
+      showToast('Semua mata kuliah sudah terdaftar sebelumnya (tidak ada data baru).');
+      return;
+    }
+
+    candidateCourses.forEach((c, cIdx) => {
       const courseId = `course-${timestamp}-${cIdx}`;
       const course: Course = { ...c, id: courseId };
       createdCourses.push(course);
@@ -163,7 +190,11 @@ export function App() {
       activeCourseId: prev.activeCourseId || createdCourses[0]?.id || null,
     }));
 
-    showToast(`Berhasil mengimpor ${createdCourses.length} mata kuliah & sesi pertemuan otomatis!`);
+    if (skippedDuplicates > 0) {
+      showToast(`Berhasil mengimpor ${createdCourses.length} mata kuliah baru (${skippedDuplicates} duplikat dilewati)!`);
+    } else {
+      showToast(`Berhasil mengimpor ${createdCourses.length} mata kuliah & sesi pertemuan otomatis!`);
+    }
   };
 
   const handleDeleteCourse = (courseId: string) => {

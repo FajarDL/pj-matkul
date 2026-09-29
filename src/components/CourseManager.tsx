@@ -3,6 +3,7 @@ import type { Course, SessionSchedule, UserRole } from '../types';
 import { COURSE_PRESETS, MASTER_LECTURERS, MASTER_ROOMS } from '../data/academicPresets';
 import { parseWebSchedule, type ParsedScheduleCourse } from '../services/scheduleParser';
 import { isPracticumCourse } from '../services/rotationAlgorithm';
+import { checkCourseDuplicate, checkScheduleConflict } from '../services/scheduleValidation';
 import { 
   Plus, 
   Trash2, 
@@ -15,7 +16,8 @@ import {
   Wand2,
   Lock,
   Globe,
-  FileSpreadsheet
+  FileSpreadsheet,
+  AlertCircle
 } from 'lucide-react';
 
 interface CourseManagerProps {
@@ -49,11 +51,13 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<Course | null>(null);
   const [selectedPresetIndex, setSelectedPresetIndex] = useState<string>('');
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Web Import State
   const [isWebImportModalOpen, setIsWebImportModalOpen] = useState(false);
   const [webImportText, setWebImportText] = useState('');
   const [parsedPreview, setParsedPreview] = useState<ParsedScheduleCourse[]>([]);
+  const [skipDuplicates, setSkipDuplicates] = useState(true);
 
   const [formData, setFormData] = useState<Omit<Course, 'id'>>({
     code: '',
@@ -75,6 +79,7 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
     }
     setEditingCourse(null);
     setSelectedPresetIndex('');
+    setFormError(null);
     setFormData({
       code: '',
       name: '',
@@ -92,6 +97,7 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
 
   const handleSelectPreset = (indexStr: string) => {
     setSelectedPresetIndex(indexStr);
+    setFormError(null);
     if (!indexStr) return;
     const preset = COURSE_PRESETS[Number(indexStr)];
     if (preset) {
@@ -123,6 +129,7 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
     }
     setEditingCourse(course);
     setSelectedPresetIndex('');
+    setFormError(null);
     setFormData({
       code: course.code,
       name: course.name,
@@ -173,6 +180,24 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
     e.preventDefault();
     if (!formData.code.trim() || !formData.name.trim()) return;
 
+    // 1. Check for Duplicate Course (code, name, or exact schedule)
+    const dupCheck = checkCourseDuplicate(formData, courses, editingCourse?.id);
+    if (dupCheck.isDuplicate) {
+      setFormError(dupCheck.message || 'Mata kuliah duplikat terdeteksi. Silakan periksa kode atau nama mata kuliah.');
+      return;
+    }
+
+    // 2. Check for Schedule Conflict (overlapping time on same day)
+    const conflictCheck = checkScheduleConflict(formData, courses, editingCourse?.id);
+    if (conflictCheck.hasConflict) {
+      const proceed = confirm(
+        `⚠️ PERINGATAN BENTROK JADWAL!\n\n${conflictCheck.message}\n\nApakah Anda yakin tetap ingin menyimpan jadwal ini?`
+      );
+      if (!proceed) return;
+    }
+
+    setFormError(null);
+
     if (editingCourse) {
       const updated = courses.map((c) =>
         c.id === editingCourse.id ? { ...c, ...formData } : c
@@ -217,7 +242,17 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
   const handleConfirmWebImport = () => {
     if (parsedPreview.length === 0) return;
 
-    const formattedCourses: Omit<Course, 'id'>[] = parsedPreview.map((item) => ({
+    // Filter duplicates if skipDuplicates is enabled
+    const itemsToImport = skipDuplicates
+      ? parsedPreview.filter((item) => !checkCourseDuplicate(item, courses).isDuplicate)
+      : parsedPreview;
+
+    if (itemsToImport.length === 0) {
+      alert('Semua mata kuliah yang diimpor sudah ada dalam daftar jadwal sistem. Tidak ada mata kuliah baru yang ditambahkan untuk mencegah duplikasi.');
+      return;
+    }
+
+    const formattedCourses: Omit<Course, 'id'>[] = itemsToImport.map((item) => ({
       code: item.code,
       name: item.name,
       lecturer: item.lecturer,
@@ -479,47 +514,106 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
                 />
               </div>
 
-              {/* Parsed Live Preview Table */}
-              {parsedPreview.length > 0 && (
-                <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                      <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                      <span>Hasil Ekstraksi ({parsedPreview.length} Mata Kuliah Terdeteksi):</span>
-                    </span>
-                  </div>
+              {/* Parsed Live Preview Table with Duplicate Detection */}
+              {parsedPreview.length > 0 && (() => {
+                const duplicateCount = parsedPreview.filter(
+                  (item) => checkCourseDuplicate(item, courses).isDuplicate
+                ).length;
+                const newCount = parsedPreview.length - duplicateCount;
 
-                  <div className="overflow-x-auto max-h-56 divide-y divide-slate-100 bg-white rounded-lg border border-slate-200 text-xs">
-                    <table className="w-full text-left border-collapse">
-                      <thead className="bg-slate-100/75 text-slate-700 font-bold text-[11px] uppercase">
-                        <tr>
-                          <th className="p-2 w-10 text-center">No</th>
-                          <th className="p-2 w-24">Kode</th>
-                          <th className="p-2">Nama Mata Kuliah</th>
-                          <th className="p-2 w-32">Hari & Jam</th>
-                          <th className="p-2 w-28">Ruangan</th>
-                          <th className="p-2">Dosen Pengampu</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {parsedPreview.map((item, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50">
-                            <td className="p-2 text-center text-slate-400 font-mono">{idx + 1}</td>
-                            <td className="p-2 font-mono font-bold text-slate-800">{item.code}</td>
-                            <td className="p-2 font-semibold text-slate-900">{item.name}</td>
-                            <td className="p-2 whitespace-nowrap text-slate-700">
-                              <div>{item.day}</div>
-                              <div className="text-[10px] text-slate-500 font-mono">{item.startTime} - {item.endTime}</div>
-                            </td>
-                            <td className="p-2 text-slate-600 truncate max-w-[120px]">{item.room}</td>
-                            <td className="p-2 text-slate-800">{item.lecturer}</td>
+                return (
+                  <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 space-y-2.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                        <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                        <span>Hasil Ekstraksi ({parsedPreview.length} Mata Kuliah Terdeteksi)</span>
+                      </span>
+
+                      <div className="flex items-center gap-1.5 text-[11px] font-semibold">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-100/80 text-emerald-800 border border-emerald-200">
+                          ✓ {newCount} Baru
+                        </span>
+                        {duplicateCount > 0 && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100/80 text-amber-800 border border-amber-200">
+                            ⚠️ {duplicateCount} Sudah Terdaftar
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Toggle Lewati Duplikat */}
+                    <div className="flex items-center justify-between p-2.5 bg-white border border-slate-200 rounded-lg text-xs">
+                      <label className="flex items-center gap-2 cursor-pointer select-none text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={skipDuplicates}
+                          onChange={(e) => setSkipDuplicates(e.target.checked)}
+                          className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                        />
+                        <span className="font-medium">
+                          Lewati mata kuliah yang sudah ada dalam jadwal (Cegah Duplikasi)
+                        </span>
+                      </label>
+                      <span className="text-[11px] text-slate-500 hidden sm:inline">
+                        {skipDuplicates ? 'Hanya mata kuliah baru yang akan disimpan' : 'Semua mata kuliah akan disimpan'}
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto max-h-56 divide-y divide-slate-100 bg-white rounded-lg border border-slate-200 text-xs">
+                      <table className="w-full text-left border-collapse">
+                        <thead className="bg-slate-100/75 text-slate-700 font-bold text-[11px] uppercase">
+                          <tr>
+                            <th className="p-2 w-8 text-center">No</th>
+                            <th className="p-2 w-24">Kode</th>
+                            <th className="p-2">Nama Mata Kuliah</th>
+                            <th className="p-2 w-32">Hari & Jam</th>
+                            <th className="p-2 w-24">Ruangan</th>
+                            <th className="p-2">Dosen Pengampu</th>
+                            <th className="p-2 w-28 text-center">Status</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {parsedPreview.map((item, idx) => {
+                            const dup = checkCourseDuplicate(item, courses);
+                            const isDup = dup.isDuplicate;
+
+                            return (
+                              <tr 
+                                key={idx} 
+                                className={isDup ? (skipDuplicates ? 'bg-amber-50/30 opacity-70 hover:opacity-100' : 'bg-amber-50/50') : 'hover:bg-slate-50'}
+                              >
+                                <td className="p-2 text-center text-slate-400 font-mono">{idx + 1}</td>
+                                <td className="p-2 font-mono font-bold text-slate-800">{item.code}</td>
+                                <td className="p-2 font-semibold text-slate-900">{item.name}</td>
+                                <td className="p-2 whitespace-nowrap text-slate-700">
+                                  <div>{item.day}</div>
+                                  <div className="text-[10px] text-slate-500 font-mono">{item.startTime} - {item.endTime}</div>
+                                </td>
+                                <td className="p-2 text-slate-600 truncate max-w-[100px]">{item.room}</td>
+                                <td className="p-2 text-slate-800">{item.lecturer}</td>
+                                <td className="p-2 text-center">
+                                  {isDup ? (
+                                    <span 
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 cursor-help"
+                                      title={dup.message}
+                                    >
+                                      ⚠️ Sudah Ada
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                      ✓ Baru
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
 
             <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
@@ -533,10 +627,23 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
               <button
                 type="button"
                 onClick={handleConfirmWebImport}
-                disabled={parsedPreview.length === 0}
+                disabled={
+                  parsedPreview.length === 0 || 
+                  (skipDuplicates && parsedPreview.every((item) => checkCourseDuplicate(item, courses).isDuplicate))
+                }
                 className="px-4 py-2 text-xs font-bold bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-lg shadow-sm cursor-pointer"
               >
-                Simpan & Tambahkan {parsedPreview.length} Mata Kuliah
+                {(() => {
+                  if (parsedPreview.length === 0) return 'Simpan & Tambahkan';
+                  const dupCount = parsedPreview.filter((item) => checkCourseDuplicate(item, courses).isDuplicate).length;
+                  const newCount = parsedPreview.length - dupCount;
+                  if (skipDuplicates) {
+                    return newCount === 0
+                      ? 'Semua Sudah Ada (Tidak Ada Data Baru)'
+                      : `Simpan ${newCount} Mata Kuliah Baru (${dupCount} Duplikat Dilewati)`;
+                  }
+                  return `Simpan & Tambahkan Semua (${parsedPreview.length})`;
+                })()}
               </button>
             </div>
           </div>
@@ -583,6 +690,16 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
               </div>
             )}
 
+            {formError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2.5 text-xs text-rose-800 animate-in fade-in">
+                <AlertCircle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
+                <div className="space-y-0.5">
+                  <span className="font-bold block">Duplikasi Terdeteksi</span>
+                  <span>{formError}</span>
+                </div>
+              </div>
+            )}
+
             <form onSubmit={handleSubmit} className="space-y-3">
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-1">
@@ -593,7 +710,10 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
                     type="text"
                     placeholder="IF301"
                     value={formData.code}
-                    onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+                    onChange={(e) => {
+                      if (formError) setFormError(null);
+                      setFormData({ ...formData, code: e.target.value });
+                    }}
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs sm:text-sm font-mono"
                     required
                   />
@@ -607,6 +727,7 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
                     placeholder="Contoh: Basis Data Lanjut atau Praktikum Basis Data"
                     value={formData.name}
                     onChange={(e) => {
+                      if (formError) setFormError(null);
                       const newName = e.target.value;
                       const isAutoPrak =
                         !editingCourse &&
