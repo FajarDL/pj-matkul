@@ -326,6 +326,7 @@ export function App() {
             onAddCourseWithPreset={handleAddCourseWithPreset}
             onBatchImportCourses={handleBatchImportCourses}
             onRequestLogin={() => setIsLoginModalOpen(true)}
+            onUpdateSessions={handleUpdateSessions}
           />
         )}
 

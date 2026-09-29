@@ -9,6 +9,20 @@ export interface StudentPjStat {
 }
 
 /**
+ * Helper to determine if a course is a practicum (does not have a PJ).
+ * Checks explicit isPracticum flag, or falls back to name/code containing 'praktikum' / 'prak.'
+ */
+export function isPracticumCourse(course?: Course | null): boolean {
+  if (!course) return false;
+  if (typeof course.isPracticum === 'boolean') {
+    return course.isPracticum;
+  }
+  const name = (course.name || '').toLowerCase();
+  const code = (course.code || '').toLowerCase();
+  return name.includes('praktikum') || name.includes('prak.') || code.startsWith('prak');
+}
+
+/**
  * Fisher-Yates Shuffle algorithm for true fair randomization
  */
 function shuffleArray<T>(array: T[]): T[] {
@@ -28,7 +42,8 @@ export function generateRotationSchedule(
   students: Student[],
   totalSessions: number,
   config: RotationConfig,
-  existingSessions: SessionSchedule[] = []
+  existingSessions: SessionSchedule[] = [],
+  isPracticum: boolean = false
 ): SessionSchedule[] {
   const activeStudents = students.filter((s) => s.isActive);
   if (activeStudents.length === 0) {
@@ -76,8 +91,8 @@ export function generateRotationSchedule(
     const assignedIds: string[] = [];
     const count = Math.max(1, config.pjCountPerSession);
 
-    // If session is marked as excluded (e.g. holiday or no PJ required)
-    const isExcluded = config.excludeSessionNumbers?.includes(sNum);
+    // If session is marked as excluded or is a practicum (no PJ required)
+    const isExcluded = isPracticum || config.excludeSessionNumbers?.includes(sNum);
 
     if (!isExcluded) {
       for (let p = 0; p < count; p++) {
@@ -253,7 +268,11 @@ export function generateGlobalRotationSchedule(
   const weekAssignments = new Map<number, Set<string>>();
 
   const updatedSessions: SessionSchedule[] = allSessions.map((session) => {
-    const isExcluded = config.excludeSessionNumbers?.includes(session.sessionNumber);
+    const course = courseMap.get(session.courseId);
+    const isPracticum = isPracticumCourse(course);
+    const isExcluded = isPracticum || config.excludeSessionNumbers?.includes(session.sessionNumber);
+
+    // If it's a practicum course or excluded session number, do not assign any PJ and do not consume rotation pool
     if (isExcluded) {
       return { ...session, assignedPjIds: [] };
     }
@@ -332,9 +351,12 @@ export function generateWhatsAppMessage(
   time: string,
   room: string,
   session: SessionSchedule,
-  assignedStudents: Student[]
+  assignedStudents: Student[],
+  isPracticum: boolean = false
 ): string {
-  const pjs = assignedStudents.length > 0
+  const pjs = isPracticum
+    ? '- (Praktikum)'
+    : assignedStudents.length > 0
     ? assignedStudents.map((s) => s.name).join(', ')
     : 'Belum ada PJ';
 
@@ -385,6 +407,7 @@ export function generateWeeklyWhatsAppMessage(
       message += `\n📌 ${currentDay.toUpperCase()}\n`;
     }
 
+    const isPracticum = isPracticumCourse(course);
     const pjs = session.assignedPjIds
       .map((id) => studentMap.get(id)?.name)
       .filter(Boolean)
@@ -395,7 +418,7 @@ export function generateWeeklyWhatsAppMessage(
     const timeFormatted = `${startTimeFormatted}–${endTimeFormatted}`;
     const roomText = course.room || '-';
     const lecturerText = course.lecturer || '-';
-    const pjsText = pjs || 'Belum ada PJ';
+    const pjsText = isPracticum ? '- (Praktikum)' : (pjs || 'Belum ada PJ');
 
     message += `${timeFormatted} → ${course.name}\n`;
     message += `📍 ${roomText} | Dosen: ${lecturerText} | PJ: ${pjsText}\n`;

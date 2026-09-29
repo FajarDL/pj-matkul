@@ -3,7 +3,8 @@ import type { Course, Student, SessionSchedule, UserRole } from '../types';
 import { 
   generateWhatsAppMessage, 
   generateWeeklyWhatsAppMessage, 
-  getDayOrder 
+  getDayOrder,
+  isPracticumCourse 
 } from '../services/rotationAlgorithm';
 import { 
   Calendar, 
@@ -134,7 +135,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Summary statistics for this week
   const weekTotalSessions = weekSessions.length;
   const weekCompletedSessions = weekSessions.filter((s) => s.status === 'completed').length;
-  const weekSessionsWithoutPj = weekSessions.filter((s) => s.assignedPjIds.length === 0).length;
+  const weekSessionsWithoutPj = weekSessions.filter((s) => {
+    const course = courseMap.get(s.courseId);
+    return s.assignedPjIds.length === 0 && !isPracticumCourse(course);
+  }).length;
 
   // Active students stats
   const activeStudents = useMemo(() => students.filter((s) => s.isActive), [students]);
@@ -178,7 +182,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       `${course.startTime} - ${course.endTime}`,
       course.room,
       session,
-      assignedStudents
+      assignedStudents,
+      isPracticumCourse(course)
     );
 
     navigator.clipboard.writeText(text);
@@ -637,6 +642,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             <span className="text-sm sm:text-base font-bold text-slate-900">
                               {course.name}
                             </span>
+                            {isPracticumCourse(course) && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-200">
+                                🧪 Praktikum
+                              </span>
+                            )}
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
                               isCompleted 
                                 ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
@@ -691,6 +701,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                     </div>
                                   </div>
                                 ))}
+                              </div>
+                            ) : isPracticumCourse(course) ? (
+                              <div className="inline-flex items-center gap-1.5 text-xs text-purple-800 bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200">
+                                <span className="text-xs">🧪</span>
+                                <span className="font-semibold">Praktikum (Tanpa PJ)</span>
                               </div>
                             ) : (
                               <div className="inline-flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">

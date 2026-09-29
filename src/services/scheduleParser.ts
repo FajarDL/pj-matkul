@@ -9,6 +9,7 @@ export interface ParsedScheduleCourse {
   room: string;
   lecturer: string;
   classSection?: string;
+  isPracticum?: boolean;
 }
 
 export interface ParseStudentResult {
@@ -171,6 +172,13 @@ export function parseWebSchedule(rawText: string): ParsedScheduleCourse[] {
 
 function finalizeParsedCourse(c: Partial<ParsedScheduleCourse>): ParsedScheduleCourse {
   const fullName = c.classSection ? `${c.name} (Kelas ${c.classSection})` : c.name || 'Mata Kuliah';
+  const isPracticum =
+    c.isPracticum !== undefined
+      ? c.isPracticum
+      : fullName.toLowerCase().includes('praktikum') ||
+        fullName.toLowerCase().includes('prak.') ||
+        (c.code || '').toLowerCase().startsWith('prak');
+
   return {
     code: c.code || 'MK001',
     name: fullName,
@@ -180,6 +188,7 @@ function finalizeParsedCourse(c: Partial<ParsedScheduleCourse>): ParsedScheduleC
     room: c.room || 'Ruang Kuliah',
     lecturer: c.lecturer || 'Dosen Pengampu',
     classSection: c.classSection,
+    isPracticum,
   };
 }
 

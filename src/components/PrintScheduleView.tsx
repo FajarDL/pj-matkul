@@ -1,5 +1,6 @@
 import React from 'react';
 import type { Course, Student, SessionSchedule } from '../types';
+import { isPracticumCourse } from '../services/rotationAlgorithm';
 
 interface PrintScheduleViewProps {
   course: Course;
@@ -80,7 +81,7 @@ export const PrintScheduleView: React.FC<PrintScheduleViewProps> = ({
                   {session.topic}
                 </td>
                 <td className="border border-black p-2">
-                  {pjNames || '-'}
+                  {isPracticumCourse(course) ? 'Praktikum (Tanpa PJ)' : (pjNames || '-')}
                 </td>
                 <td className="border border-black p-2 text-center"></td>
               </tr>

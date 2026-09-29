@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import type { Course, SessionSchedule, UserRole } from '../types';
 import { COURSE_PRESETS, MASTER_LECTURERS, MASTER_ROOMS } from '../data/academicPresets';
 import { parseWebSchedule, type ParsedScheduleCourse } from '../services/scheduleParser';
+import { isPracticumCourse } from '../services/rotationAlgorithm';
 import { 
   Plus, 
   Trash2, 
@@ -28,6 +29,7 @@ interface CourseManagerProps {
   onAddCourseWithPreset?: (newCourse: Course, topics: string[]) => void;
   onBatchImportCourses?: (courses: Omit<Course, 'id'>[]) => void;
   onRequestLogin?: () => void;
+  onUpdateSessions?: (sessions: SessionSchedule[]) => void;
 }
 
 export const CourseManager: React.FC<CourseManagerProps> = ({
@@ -41,6 +43,7 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
   onAddCourseWithPreset,
   onBatchImportCourses,
   onRequestLogin,
+  onUpdateSessions,
 }) => {
   const isAdmin = userRole === 'owner' || userRole === 'admin';
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -62,6 +65,7 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
     room: '',
     totalSessions: 16,
     color: 'indigo',
+    isPracticum: false,
   });
 
   const openAddModal = () => {
@@ -81,6 +85,7 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
       room: '',
       totalSessions: 16,
       color: 'indigo',
+      isPracticum: false,
     });
     setIsModalOpen(true);
   };
@@ -90,6 +95,12 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
     if (!indexStr) return;
     const preset = COURSE_PRESETS[Number(indexStr)];
     if (preset) {
+      const isPrak =
+        preset.isPracticum !== undefined
+          ? preset.isPracticum
+          : preset.name.toLowerCase().includes('praktikum') ||
+            preset.name.toLowerCase().includes('prak.');
+
       setFormData({
         code: preset.code,
         name: preset.name,
@@ -100,6 +111,7 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
         room: preset.room,
         totalSessions: preset.totalSessions,
         color: 'indigo',
+        isPracticum: isPrak,
       });
     }
   };
@@ -121,8 +133,40 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
       room: course.room,
       totalSessions: course.totalSessions,
       color: course.color,
+      isPracticum: course.isPracticum !== undefined ? course.isPracticum : isPracticumCourse(course),
     });
     setIsModalOpen(true);
+  };
+
+  const handleTogglePracticum = (courseId: string) => {
+    if (!isAdmin) {
+      onRequestLogin?.();
+      return;
+    }
+
+    const target = courses.find((c) => c.id === courseId);
+    if (!target) return;
+
+    const currentlyPracticum = isPracticumCourse(target);
+    const nextPracticum = !currentlyPracticum;
+
+    const confirmMsg = nextPracticum
+      ? `Jadikan "${target.name}" sebagai Mata Kuliah Praktikum?\n\nSesi praktikum tidak memerlukan penanggung jawab (PJ) dan rotasi PJ yang ada akan dikosongkan.`
+      : `Ubah "${target.name}" menjadi Mata Kuliah Teori Biasa?\n\nAnda dapat mengacak rotasi PJ untuk mata kuliah ini.`;
+
+    if (confirm(confirmMsg)) {
+      const updatedCourses = courses.map((c) =>
+        c.id === courseId ? { ...c, isPracticum: nextPracticum } : c
+      );
+      onUpdateCourses(updatedCourses);
+
+      if (nextPracticum && onUpdateSessions) {
+        const updatedSessions = sessions.map((s) =>
+          s.courseId === courseId ? { ...s, assignedPjIds: [] } : s
+        );
+        onUpdateSessions(updatedSessions);
+      }
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -134,6 +178,13 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
         c.id === editingCourse.id ? { ...c, ...formData } : c
       );
       onUpdateCourses(updated);
+
+      if (formData.isPracticum && onUpdateSessions) {
+        const updatedSessions = sessions.map((s) =>
+          s.courseId === editingCourse.id ? { ...s, assignedPjIds: [] } : s
+        );
+        onUpdateSessions(updatedSessions);
+      }
     } else {
       const newCourse: Course = {
         id: `course-${Date.now()}`,
@@ -176,6 +227,12 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
       room: item.room,
       totalSessions: 16,
       color: 'indigo',
+      isPracticum:
+        item.isPracticum !== undefined
+          ? item.isPracticum
+          : item.name.toLowerCase().includes('praktikum') ||
+            item.name.toLowerCase().includes('prak.') ||
+            item.code.toLowerCase().startsWith('prak'),
     }));
 
     if (onBatchImportCourses) {
@@ -274,6 +331,15 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
                         Aktif
                       </span>
                     )}
+                    {isPracticumCourse(course) ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-purple-100 text-purple-800 px-2.5 py-0.5 rounded-full border border-purple-200">
+                        🧪 Praktikum (Tanpa PJ)
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-medium bg-slate-100 text-slate-600 px-2.5 py-0.5 rounded-full border border-slate-200">
+                        Teori
+                      </span>
+                    )}
                   </div>
 
                   {isAdmin && (
@@ -304,9 +370,25 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
                   <h3 className="text-lg font-bold text-slate-900 leading-snug">
                     {course.name}
                   </h3>
-                  <p className="text-xs text-slate-600 mt-1">
-                    Dosen: <span className="font-semibold text-slate-800">{course.lecturer}</span>
-                  </p>
+                  <div className="flex items-center justify-between mt-1">
+                    <p className="text-xs text-slate-600">
+                      Dosen: <span className="font-semibold text-slate-800">{course.lecturer}</span>
+                    </p>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => handleTogglePracticum(course.id)}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-md border transition cursor-pointer ${
+                          isPracticumCourse(course)
+                            ? 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100'
+                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-purple-50 hover:text-purple-700'
+                        }`}
+                        title="Klik untuk mengubah jenis mata kuliah ini"
+                      >
+                        {isPracticumCourse(course) ? '🧪 Praktikum' : 'Ubah jadi Praktikum'}
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 mt-4 text-xs text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-100">
@@ -522,13 +604,43 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
                   </label>
                   <input
                     type="text"
-                    placeholder="Contoh: Basis Data Lanjut"
+                    placeholder="Contoh: Basis Data Lanjut atau Praktikum Basis Data"
                     value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    onChange={(e) => {
+                      const newName = e.target.value;
+                      const isAutoPrak =
+                        !editingCourse &&
+                        (newName.toLowerCase().includes('praktikum') ||
+                          newName.toLowerCase().includes('prak.'));
+                      setFormData({
+                        ...formData,
+                        name: newName,
+                        isPracticum: isAutoPrak ? true : formData.isPracticum,
+                      });
+                    }}
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs sm:text-sm font-medium"
                     required
                   />
                 </div>
+              </div>
+
+              {/* Praktikum Checkbox Toggle */}
+              <div className="p-3 bg-purple-50/70 border border-purple-200/80 rounded-xl flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  id="isPracticum"
+                  checked={formData.isPracticum || false}
+                  onChange={(e) => setFormData({ ...formData, isPracticum: e.target.checked })}
+                  className="w-4 h-4 mt-0.5 text-purple-600 rounded border-slate-300 focus:ring-purple-500 cursor-pointer"
+                />
+                <label htmlFor="isPracticum" className="text-xs text-slate-800 cursor-pointer select-none">
+                  <span className="font-bold flex items-center gap-1.5 text-purple-950">
+                    <span>🧪 Mata Kuliah Praktikum (Tanpa Rotasi PJ)</span>
+                  </span>
+                  <span className="text-[11px] text-purple-700/90 block mt-0.5 leading-relaxed">
+                    Centang jika mata kuliah ini adalah praktikum laboratorium. Sesi praktikum otomatis dikecualikan dari rotasi penugasan PJ dan tidak membebani giliran mahasiswa.
+                  </span>
+                </label>
               </div>
 
               <div>

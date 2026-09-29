@@ -5,7 +5,8 @@ import {
   generateGlobalRotationSchedule,
   generateWhatsAppMessage, 
   swapPjBetweenSessions,
-  getDayOrder
+  getDayOrder,
+  isPracticumCourse
 } from '../services/rotationAlgorithm';
 import { 
   Shuffle, 
@@ -162,6 +163,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
     if (!activeCourse) return;
 
+    if (isPracticumCourse(activeCourse)) {
+      alert('Mata kuliah ini adalah Praktikum (tanpa rotasi PJ). Anda dapat mengubah statusnya di menu "Mata Kuliah" jika membutuhkan PJ.');
+      return;
+    }
+
     if (students.filter((s) => s.isActive).length === 0) {
       alert('Tambahkan mahasiswa aktif terlebih dahulu di tab "Data Mahasiswa"!');
       return;
@@ -173,7 +179,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       students,
       activeCourse.totalSessions,
       rotationConfig,
-      currentCourseSessions
+      currentCourseSessions,
+      isPracticumCourse(activeCourse)
     );
 
     const otherSessions = sessions.filter((s) => s.courseId !== activeCourse.id);
@@ -216,6 +223,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
     if (!courseObj) return;
 
     const assigned = students.filter((s) => session.assignedPjIds.includes(s.id));
+    const isPrak = isPracticumCourse(courseObj);
     const text = generateWhatsAppMessage(
       courseObj.name,
       courseObj.lecturer,
@@ -223,7 +231,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       `${courseObj.startTime} - ${courseObj.endTime}`,
       courseObj.room,
       session,
-      assigned
+      assigned,
+      isPrak
     );
     navigator.clipboard.writeText(text);
     setCopiedSessionId(session.id);
@@ -330,6 +339,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                 }`}
               >
                 <span>{c.name}</span>
+                {isPracticumCourse(c) && (
+                  <span className="text-[10px] bg-purple-200/80 text-purple-900 px-1.5 py-0.2 rounded font-bold">
+                    🧪 Prak
+                  </span>
+                )}
                 <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${isSelected ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'}`}>
                   {c.code}
                 </span>
@@ -356,6 +370,12 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
               : 'Rotasi berkesinambungan di seluruh mata kuliah agar beban tugas terbagi secara adil.'
             }
           </p>
+          {activeCourse && isPracticumCourse(activeCourse) && (
+            <div className="mt-2 inline-flex items-center gap-1.5 text-xs text-purple-800 bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200 font-medium">
+              <span>🧪</span>
+              <span>Mata kuliah ini berstatus Praktikum (tanpa rotasi penugasan PJ).</span>
+            </div>
+          )}
         </div>
 
         {/* Action Buttons */}
@@ -502,6 +522,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                               {courseObj?.code || '-'}
                             </span>
                             <span className="truncate">{courseObj?.name || 'Mata Kuliah'}</span>
+                            {isPracticumCourse(courseObj) && (
+                              <span className="text-[9px] bg-purple-100 text-purple-800 px-1.5 py-0.2 rounded font-bold border border-purple-200 shrink-0">
+                                🧪 Prak
+                              </span>
+                            )}
                           </div>
                           <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
                             <span>{courseObj?.startTime} - {courseObj?.endTime} WIB</span>
@@ -552,6 +577,10 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                               </div>
                             ))}
                           </div>
+                        ) : isPracticumCourse(courseObj) ? (
+                          <span className="text-xs text-purple-700 bg-purple-50 px-2.5 py-0.5 rounded-full border border-purple-200 font-medium inline-flex items-center gap-1">
+                            <span>🧪 Praktikum (Tanpa PJ)</span>
+                          </span>
                         ) : (
                           <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 italic">
                             Belum Ada PJ

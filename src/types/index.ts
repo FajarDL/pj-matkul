@@ -48,6 +48,7 @@ export interface Course {
   room: string;
   totalSessions: number;
   color: string;
+  isPracticum?: boolean;
 }
 
 export type SessionStatus = 'upcoming' | 'ongoing' | 'completed' | 'cancelled';
@@ -83,6 +84,7 @@ export interface CoursePreset {
   room: string;
   totalSessions: number;
   topics: string[];
+  isPracticum?: boolean;
 }
 
 export interface AppState {
