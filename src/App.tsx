@@ -224,8 +224,8 @@ export function App() {
     }
   };
 
-  const handleReset = () => {
-    if (confirm('Apakah Anda yakin ingin menghapus seluruh data? Semua mata kuliah, jadwal, dan daftar mahasiswa akan dikosongkan.')) {
+  const handleReset = (skipConfirm: boolean = false) => {
+    if (skipConfirm || confirm('Apakah Anda yakin ingin menghapus seluruh data? Semua mata kuliah, jadwal, dan daftar mahasiswa akan dikosongkan.')) {
       const emptyData = storageService.clearAllData();
       setData(emptyData);
       showToast('Seluruh data berhasil dihapus dan dikosongkan.');
@@ -347,6 +347,7 @@ export function App() {
               setActiveTab('schedule');
             }}
             onRequestLogin={() => setIsLoginModalOpen(true)}
+            onReset={() => handleReset(true)}
           />
         )}
 

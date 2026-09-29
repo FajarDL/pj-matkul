@@ -9,7 +9,6 @@ import {
   EyeOff, 
   X, 
   AlertCircle,
-  RotateCcw,
   ShieldCheck
 } from 'lucide-react';
 
@@ -54,32 +53,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
   };
 
-  // Handle Reset Key
-  const handleResetKey = () => {
-    if (
-      confirm(
-        'Apakah Anda ingin mereset kunci akses?\n\nKunci lama akan dihapus dari penyimpanan lokal dan Anda dapat langsung membuat kunci akses baru.\n(Data jadwal dan mahasiswa tetap aman tersimpan).'
-      )
-    ) {
-      authService.resetKey();
-      setInputKey('');
-      setErrorMessage('');
-      window.location.reload();
-    }
-  };
 
-  // Handle Total Reset
-  const handleTotalReset = () => {
-    if (
-      confirm(
-        'PERINGATAN: Apakah Anda yakin ingin mereset TOTAL seluruh data aplikasi (mata kuliah, jadwal, mahasiswa, dan kunci)?\n\nAplikasi akan kembali ke kondisi kosong awal.'
-      )
-    ) {
-      localStorage.clear();
-      sessionStorage.clear();
-      window.location.reload();
-    }
-  };
 
   return (
     <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm no-print ${isGate ? 'min-h-screen' : ''}`}>
@@ -181,27 +155,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               <ArrowRight className="w-4 h-4" />
             </button>
 
-            {/* Reset Utility Links */}
-            <div className="pt-3 border-t border-slate-100 flex flex-col items-center gap-1.5 text-center">
-              {isKeyConfigured && (
-                <button
-                  type="button"
-                  onClick={handleResetKey}
-                  className="text-xs text-rose-600 hover:text-rose-700 hover:underline font-semibold inline-flex items-center gap-1 cursor-pointer"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Lupa Kunci? Reset Kunci Akses</span>
-                </button>
-              )}
 
-              <button
-                type="button"
-                onClick={handleTotalReset}
-                className="text-[10px] text-slate-400 hover:text-rose-600 underline cursor-pointer mt-1"
-              >
-                Reset total seluruh data aplikasi
-              </button>
-            </div>
 
           </form>
         </div>

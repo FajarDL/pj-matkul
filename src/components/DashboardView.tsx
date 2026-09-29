@@ -24,8 +24,13 @@ import {
   Copy,
   ExternalLink,
   MessageSquare,
-  X
+  X,
+  RotateCcw,
+  Trash2,
+  KeyRound,
+  ShieldAlert
 } from 'lucide-react';
+import { authService } from '../services/authService';
 
 interface DashboardViewProps {
   courses: Course[];
@@ -39,6 +44,7 @@ interface DashboardViewProps {
   onToggleSessionStatus: (sessionId: string) => void;
   onOpenGlobalRotationModal?: () => void;
   onRequestLogin?: () => void;
+  onReset?: () => void;
 }
 
 const DAYS_OF_WEEK = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -55,12 +61,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onToggleSessionStatus,
   onOpenGlobalRotationModal,
   onRequestLogin: _onRequestLogin,
+  onReset,
 }) => {
   const [copiedSessionId, setCopiedSessionId] = useState<string | null>(null);
   const [copiedWeekDigest, setCopiedWeekDigest] = useState(false);
   const [personalSearchQuery, setPersonalSearchQuery] = useState(currentStudentNim || '');
   const [isWaModalOpen, setIsWaModalOpen] = useState(false);
   const [editableWaText, setEditableWaText] = useState('');
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
   // Calculate maximum total sessions across courses (usually 16)
   const maxSessions = useMemo(() => {
@@ -193,6 +201,134 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setIsWaModalOpen(true);
   };
 
+  // Render dedicated Reset Modal
+  const renderResetModal = () => (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs no-print text-left">
+      <div className="bg-white rounded-2xl max-w-md w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+              <RotateCcw className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-900 leading-snug">
+                Pusat Reset Aplikasi
+              </h3>
+              <p className="text-xs text-slate-500">
+                Pilih opsi pembersihan data yang diinginkan
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setIsResetModalOpen(false)}
+            className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer rounded-lg hover:bg-slate-100 transition"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="space-y-3 pt-1">
+          {/* Option 1: Reset Perkuliahan & Mahasiswa */}
+          <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100/70 transition space-y-2">
+            <div className="flex items-start gap-2.5">
+              <Trash2 className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
+              <div>
+                <h4 className="text-xs font-bold text-slate-900">
+                  Reset Jadwal Perkuliahan & Mahasiswa
+                </h4>
+                <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
+                  Menghapus seluruh daftar mata kuliah, jadwal mingguan, sesi rotasi PJ, dan daftar mahasiswa dari penyimpanan lokal browser. Kunci akses Anda tetap aman.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm('Apakah Anda yakin ingin menghapus seluruh data jadwal perkuliahan dan mahasiswa?')) {
+                  setIsResetModalOpen(false);
+                  onReset?.();
+                }
+              }}
+              className="w-full mt-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Hapus Jadwal & Mahasiswa</span>
+            </button>
+          </div>
+
+          {/* Option 2: Reset Kunci Akses */}
+          <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100/70 transition space-y-2">
+            <div className="flex items-start gap-2.5">
+              <KeyRound className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+              <div>
+                <h4 className="text-xs font-bold text-slate-900">
+                  Reset Kunci Akses Masuk
+                </h4>
+                <p className="text-[11px] text-slate-600 leading-relaxed mt-0.5">
+                  Menghapus kunci akses dari browser ini. Anda akan diminta membuat kunci baru saat berikutnya membuka aplikasi. Data perkuliahan tetap aman tersimpan.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm('Apakah Anda yakin ingin mereset kunci akses aplikasi?')) {
+                  authService.resetKey();
+                  setIsResetModalOpen(false);
+                  window.location.reload();
+                }
+              }}
+              className="w-full mt-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer"
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>Reset Kunci Akses</span>
+            </button>
+          </div>
+
+          {/* Option 3: Reset Total */}
+          <div className="p-3.5 rounded-xl border border-rose-200 bg-rose-50/50 space-y-2">
+            <div className="flex items-start gap-2.5">
+              <ShieldAlert className="w-4 h-4 text-rose-700 mt-0.5 shrink-0" />
+              <div>
+                <h4 className="text-xs font-bold text-rose-900">
+                  Reset Total Aplikasi (Kembali ke Awal)
+                </h4>
+                <p className="text-[11px] text-rose-700 leading-relaxed mt-0.5">
+                  Menghapus seluruh jadwal, mahasiswa, DAN kunci akses secara menyeluruh (Factory Reset).
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm('PERINGATAN: Seluruh data perkuliahan, rotasi PJ, dan kunci akses akan dihapus total secara permanen. Lanjutkan?')) {
+                  authService.resetAllAuthAndSecurity();
+                  onReset?.();
+                  setIsResetModalOpen(false);
+                  window.location.reload();
+                }
+              }}
+              className="w-full mt-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-900 hover:bg-black text-white rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
+              <span>Reset Total Seluruh Aplikasi</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="pt-2 flex justify-end border-t border-slate-100">
+          <button
+            type="button"
+            onClick={() => setIsResetModalOpen(false)}
+            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition cursor-pointer"
+          >
+            Batal
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   // If no courses added yet
   if (courses.length === 0) {
     return (
@@ -204,13 +340,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <p className="text-xs sm:text-sm text-slate-500 mt-2 mb-6 leading-relaxed">
           Mulai dengan menambahkan daftar mata kuliah kelas Anda atau gunakan fitur impor otomatis dari jadwal SIAKAD universitas.
         </p>
-        <button
-          onClick={onNavigateToCourses}
-          className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs sm:text-sm px-5 py-2.5 rounded-xl shadow-xs transition cursor-pointer"
-        >
-          <span>Buka Menu Mata Kuliah</span>
-          <ArrowRight className="w-4 h-4" />
-        </button>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <button
+            onClick={onNavigateToCourses}
+            className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs sm:text-sm px-5 py-2.5 rounded-xl shadow-xs transition cursor-pointer"
+          >
+            <span>Buka Menu Mata Kuliah</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => setIsResetModalOpen(true)}
+            className="inline-flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs sm:text-sm px-4 py-2.5 rounded-xl border border-rose-200 transition cursor-pointer"
+          >
+            <RotateCcw className="w-4 h-4 text-rose-600" />
+            <span>Reset Data</span>
+          </button>
+        </div>
+        {isResetModalOpen && renderResetModal()}
       </div>
     );
   }
@@ -258,6 +404,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             >
               <span>Jadwal Semester</span>
               <ArrowRight className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={() => setIsResetModalOpen(true)}
+              title="Reset data jadwal atau aplikasi"
+              className="inline-flex items-center gap-1.5 bg-slate-800/80 hover:bg-rose-950/50 text-slate-300 hover:text-rose-200 border border-slate-700 hover:border-rose-800 font-medium px-3.5 py-2.5 rounded-xl text-xs sm:text-sm transition cursor-pointer shadow-xs"
+            >
+              <RotateCcw className="w-4 h-4 text-rose-400" />
+              <span>Reset</span>
             </button>
           </div>
         </div>
@@ -702,13 +857,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <button
               onClick={onNavigateToStudents}
               className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-100 text-slate-800 font-semibold px-3.5 py-2 rounded-xl border border-slate-200 shadow-2xs transition cursor-pointer"
             >
               <Users className="w-3.5 h-3.5 text-slate-500" />
               <span>Lihat Statistik Mahasiswa</span>
+            </button>
+            <button
+              onClick={() => setIsResetModalOpen(true)}
+              className="inline-flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold px-3.5 py-2 rounded-xl border border-rose-200 shadow-2xs transition cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+              <span>Reset Data</span>
             </button>
           </div>
         </div>
@@ -793,6 +955,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Reset Confirmation Modal */}
+      {isResetModalOpen && renderResetModal()}
 
     </div>
   );
