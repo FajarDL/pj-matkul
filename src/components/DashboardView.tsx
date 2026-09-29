@@ -6,7 +6,8 @@ import {
   getDayOrder,
   isPracticumCourse,
   swapPjBetweenSessions,
-  revertSessionToOriginal
+  revertSessionToOriginal,
+  pickFairestCandidateStudent
 } from '../services/rotationAlgorithm';
 import { 
   Calendar, 
@@ -269,6 +270,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return map;
   }, [weekSessions, courseMap]);
 
+  // Minimum duty count among active students who are free this week (for fair recommendation)
+  const minDutyAmongFree = useMemo(() => {
+    let min = Infinity;
+    activeStudents.forEach((s) => {
+      const weekAssignments = studentWeekAssignmentsMap.get(s.id) || [];
+      if (weekAssignments.length === 0) {
+        const count = studentDutyCountMap.get(s.id) || 0;
+        if (count < min) min = count;
+      }
+    });
+    return min === Infinity ? 0 : min;
+  }, [activeStudents, studentWeekAssignmentsMap, studentDutyCountMap]);
+
   // Active course for swap modal
   const activeCourseForSwap = useMemo(() => {
     if (!activeSessionForSwap) return null;
@@ -488,6 +502,83 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       `Rotasi PJ antara ${cA} dan ${cB} berhasil ditukar`,
       previousSessions
     );
+  };
+
+  // Automatically pick the fairest candidate student
+  const handleAutoPickFairestStudent = () => {
+    if (!isAdmin) {
+      onRequestLogin?.();
+      return;
+    }
+    if (!activeSessionForSwap || !onUpdateSessions) return;
+
+    // Calculate duty counts, last assigned index, course history from all sessions
+    const dutyCountMap = new Map<string, number>();
+    const lastAssignedIndexMap = new Map<string, number>();
+    const courseHistoryMap = new Map<string, Map<string, number>>();
+
+    activeStudents.forEach((s) => {
+      dutyCountMap.set(s.id, 0);
+      courseHistoryMap.set(s.id, new Map());
+    });
+
+    // Chronologically sort all sessions to calculate accurate rest interval
+    const sortedSessions = [...sessions].sort((a, b) => {
+      if (a.sessionNumber !== b.sessionNumber) return a.sessionNumber - b.sessionNumber;
+      const cA = courseMap.get(a.courseId);
+      const cB = courseMap.get(b.courseId);
+      const dA = getDayOrder(cA?.day || '');
+      const dB = getDayOrder(cB?.day || '');
+      if (dA !== dB) return dA - dB;
+      return (cA?.startTime || '').localeCompare(cB?.startTime || '');
+    });
+
+    let currentSessionIdx = 0;
+    sortedSessions.forEach((sess, idx) => {
+      if (sess.id === activeSessionForSwap.id) {
+        currentSessionIdx = idx;
+      }
+      sess.assignedPjIds.forEach((id) => {
+        dutyCountMap.set(id, (dutyCountMap.get(id) || 0) + 1);
+        lastAssignedIndexMap.set(id, idx);
+        const cMap = courseHistoryMap.get(id) || new Map();
+        cMap.set(sess.courseId, (cMap.get(sess.courseId) || 0) + 1);
+        courseHistoryMap.set(id, cMap);
+      });
+    });
+
+    // If replacing someone, exclude that duty from the replaced student's count
+    if (selectedStudentToReplace) {
+      const curDuty = dutyCountMap.get(selectedStudentToReplace) || 0;
+      dutyCountMap.set(selectedStudentToReplace, Math.max(0, curDuty - 1));
+    }
+
+    const assignedThisWeek = new Set<string>();
+    weekSessions.forEach((sess) => {
+      sess.assignedPjIds.forEach((id) => assignedThisWeek.add(id));
+    });
+    // Remove students currently on this active session from the exclusion set
+    activeSessionForSwap.assignedPjIds.forEach((id) => assignedThisWeek.delete(id));
+
+    const chosen = pickFairestCandidateStudent(
+      activeStudents,
+      activeSessionForSwap.assignedPjIds.filter((id) => id !== selectedStudentToReplace),
+      assignedThisWeek,
+      dutyCountMap,
+      lastAssignedIndexMap,
+      courseHistoryMap,
+      currentSessionIdx,
+      activeSessionForSwap.courseId,
+      true,
+      'fair_random'
+    );
+
+    if (!chosen) {
+      alert('Tidak ada mahasiswa aktif yang tersedia untuk penugasan adil saat ini.');
+      return;
+    }
+
+    handleAssignOrReplaceStudent(chosen.id);
   };
 
   // Render dedicated Reset Modal
@@ -924,16 +1015,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       {selectedStudentToReplace ? 'Pilih Mahasiswa Pengganti:' : 'Pilih Mahasiswa untuk Ditugaskan:'}
                     </span>
 
-                    {/* Filter checkbox: Free students this week */}
-                    <label className="flex items-center gap-1.5 cursor-pointer select-none text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-200 transition">
-                      <input
-                        type="checkbox"
-                        checked={onlyShowFreeStudents}
-                        onChange={(e) => setOnlyShowFreeStudents(e.target.checked)}
-                        className="w-3.5 h-3.5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
-                      />
-                      <span>Hanya yang bebas tugas di Minggu ini</span>
-                    </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleAutoPickFairestStudent}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-lg text-[11px] font-bold shadow-2xs transition cursor-pointer"
+                        title="Pilih mahasiswa secara acak yang paling adil (beban tugas terendah, bebas minggu ini, istirahat terlama)"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                        <span>🎲 Acak yang Paling Adil</span>
+                      </button>
+
+                      {/* Filter checkbox: Free students this week */}
+                      <label className="flex items-center gap-1.5 cursor-pointer select-none text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg border border-emerald-200 transition">
+                        <input
+                          type="checkbox"
+                          checked={onlyShowFreeStudents}
+                          onChange={(e) => setOnlyShowFreeStudents(e.target.checked)}
+                          className="w-3.5 h-3.5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                        />
+                        <span>Hanya bebas tugas minggu ini</span>
+                      </label>
+                    </div>
                   </div>
 
                   {/* Search Bar */}
@@ -975,6 +1078,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                   {isOriginalPjOfThis && (
                                     <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded">
                                       ★ PJ Asli Rotasi
+                                    </span>
+                                  )}
+                                  {!isAssignedOtherDaysThisWeek && dutyCount === minDutyAmongFree && (
+                                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100/90 border border-emerald-300 px-1.5 py-0.2 rounded">
+                                      ✨ Rekomendasi Paling Adil
                                     </span>
                                   )}
                                 </div>

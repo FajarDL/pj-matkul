@@ -1,4 +1,4 @@
-import type { Student, SessionSchedule, RotationConfig, Course } from '../types';
+import type { Student, SessionSchedule, RotationConfig, Course, RotationMode } from '../types';
 
 export interface StudentPjStat {
   student: Student;
@@ -25,13 +25,112 @@ export function isPracticumCourse(course?: Course | null): boolean {
 /**
  * Fisher-Yates Shuffle algorithm for true fair randomization
  */
-function shuffleArray<T>(array: T[]): T[] {
+export function shuffleArray<T>(array: T[]): T[] {
   const result = [...array];
   for (let i = result.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [result[i], result[j]] = [result[j], result[i]];
   }
   return result;
+}
+
+/**
+ * Fair Random Rotation Candidate Selector
+ * 
+ * When students have completed a duty and names appear again:
+ * 1. Strictly prioritizes students with the lowest cumulative duty count (load balancing).
+ * 2. Strictly avoids multiple duties in the same week (if student pool >= slots).
+ * 3. Maximizes rest period (cooldown): prioritizes students who haven't served for the longest time.
+ * 4. Course variety: prefers students who haven't served as PJ for this specific course yet.
+ * 5. Uses fair random selection or configured mode to break ties without bias.
+ */
+export function pickFairestCandidateStudent(
+  activeStudents: Student[],
+  alreadyAssignedInSession: string[],
+  assignedThisWeek: Set<string>,
+  dutyCountMap: Map<string, number>,
+  lastAssignedIndexMap: Map<string, number>,
+  courseHistoryMap: Map<string, Map<string, number>>,
+  currentSessionIndex: number,
+  courseId?: string,
+  randomize: boolean = true,
+  mode: RotationMode = 'fair_random'
+): Student | null {
+  // Step 1: Filter out students already assigned in THIS exact session
+  let candidates = activeStudents.filter((s) => !alreadyAssignedInSession.includes(s.id));
+  if (candidates.length === 0) return null;
+
+  // Step 2: Avoid double duty in the same week if enough students exist
+  if (assignedThisWeek.size < activeStudents.length) {
+    const freeThisWeek = candidates.filter((s) => !assignedThisWeek.has(s.id));
+    if (freeThisWeek.length > 0) {
+      candidates = freeThisWeek;
+    }
+  }
+
+  // Step 3: Strictly balance duties (lowest duty count)
+  let minDuty = Infinity;
+  candidates.forEach((s) => {
+    const count = dutyCountMap.get(s.id) || 0;
+    if (count < minDuty) minDuty = count;
+  });
+
+  const lowestDutyCandidates = candidates.filter(
+    (s) => (dutyCountMap.get(s.id) || 0) === minDuty
+  );
+
+  // Step 4: Maximize rest / cooldown period (distance from last duty)
+  let maxRest = -Infinity;
+  lowestDutyCandidates.forEach((s) => {
+    const lastIndex = lastAssignedIndexMap.get(s.id);
+    const rest = lastIndex === undefined ? 999999 : currentSessionIndex - lastIndex;
+    if (rest > maxRest) maxRest = rest;
+  });
+
+  const bestRestedCandidates = lowestDutyCandidates.filter((s) => {
+    const lastIndex = lastAssignedIndexMap.get(s.id);
+    const rest = lastIndex === undefined ? 999999 : currentSessionIndex - lastIndex;
+    return rest === maxRest;
+  });
+
+  // Step 5: Course Diversity (prefer students who have not served as PJ for this course yet)
+  let bestCandidates = bestRestedCandidates;
+  if (courseId) {
+    let minCourseDuty = Infinity;
+    bestRestedCandidates.forEach((s) => {
+      const cCount = courseHistoryMap.get(s.id)?.get(courseId) || 0;
+      if (cCount < minCourseDuty) minCourseDuty = cCount;
+    });
+
+    const lowestCourseDuty = bestRestedCandidates.filter((s) => {
+      const cCount = courseHistoryMap.get(s.id)?.get(courseId) || 0;
+      return cCount === minCourseDuty;
+    });
+
+    if (lowestCourseDuty.length > 0) {
+      bestCandidates = lowestCourseDuty;
+    }
+  }
+
+  // Step 6: Fair Random or Mode Tie-Breaker
+  if (bestCandidates.length === 1) {
+    return bestCandidates[0];
+  }
+
+  if (randomize || mode === 'fair_random') {
+    const randomIndex = Math.floor(Math.random() * bestCandidates.length);
+    return bestCandidates[randomIndex];
+  }
+
+  if (mode === 'sequential_nim') {
+    return [...bestCandidates].sort((a, b) => a.nim.localeCompare(b.nim))[0];
+  }
+
+  if (mode === 'alphabetical') {
+    return [...bestCandidates].sort((a, b) => a.name.localeCompare(b.name))[0];
+  }
+
+  return bestCandidates[0];
 }
 
 /**
@@ -50,24 +149,18 @@ export function generateRotationSchedule(
     return [];
   }
 
-  // Determine ordering based on mode
-  let sortedStudents: Student[] = [];
-  if (config.mode === 'fair_random') {
-    sortedStudents = shuffleArray(activeStudents);
-  } else if (config.mode === 'sequential_nim') {
-    sortedStudents = [...activeStudents].sort((a, b) => a.nim.localeCompare(b.nim));
-  } else if (config.mode === 'alphabetical') {
-    sortedStudents = [...activeStudents].sort((a, b) => a.name.localeCompare(b.name));
-  } else {
-    sortedStudents = [...activeStudents];
-  }
-
   // Calculate dates based on startDate and intervalDays
   const startDateObj = config.startDate ? new Date(config.startDate) : new Date();
 
-  // Pointer for rotation queue
-  let studentPool = [...sortedStudents];
-  let poolIndex = 0;
+  // Track duty counts and last assigned session index for fair load-balanced rotation
+  const dutyCountMap = new Map<string, number>();
+  const lastAssignedIndexMap = new Map<string, number>();
+  const courseHistoryMap = new Map<string, Map<string, number>>();
+
+  activeStudents.forEach((s) => {
+    dutyCountMap.set(s.id, 0);
+    courseHistoryMap.set(s.id, new Map());
+  });
 
   const newSessions: SessionSchedule[] = [];
 
@@ -96,23 +189,28 @@ export function generateRotationSchedule(
 
     if (!isExcluded) {
       for (let p = 0; p < count; p++) {
-        // If we ran out of students in the current pool, re-fill and re-shuffle if random
-        if (poolIndex >= studentPool.length) {
-          studentPool = config.mode === 'fair_random' ? shuffleArray(activeStudents) : [...sortedStudents];
-          poolIndex = 0;
-        }
+        const candidate = pickFairestCandidateStudent(
+          activeStudents,
+          assignedIds,
+          new Set(),
+          dutyCountMap,
+          lastAssignedIndexMap,
+          courseHistoryMap,
+          sNum,
+          courseId,
+          config.mode === 'fair_random',
+          config.mode
+        );
 
-        // Avoid assigning duplicate student in the exact same session
-        let candidate = studentPool[poolIndex];
-        let searchAttempts = 0;
-        while (assignedIds.includes(candidate.id) && searchAttempts < studentPool.length) {
-          poolIndex = (poolIndex + 1) % studentPool.length;
-          candidate = studentPool[poolIndex];
-          searchAttempts++;
-        }
+        if (candidate) {
+          assignedIds.push(candidate.id);
+          dutyCountMap.set(candidate.id, (dutyCountMap.get(candidate.id) || 0) + 1);
+          lastAssignedIndexMap.set(candidate.id, sNum);
 
-        assignedIds.push(candidate.id);
-        poolIndex++;
+          const cMap = courseHistoryMap.get(candidate.id) || new Map();
+          cMap.set(courseId, (cMap.get(courseId) || 0) + 1);
+          courseHistoryMap.set(candidate.id, cMap);
+        }
       }
     }
 
@@ -187,18 +285,6 @@ export function generateGlobalRotationSchedule(
     return existingSessions;
   }
 
-  // Determine student order based on mode
-  let sortedStudents: Student[] = [];
-  if (config.mode === 'fair_random') {
-    sortedStudents = shuffleArray(activeStudents);
-  } else if (config.mode === 'sequential_nim') {
-    sortedStudents = [...activeStudents].sort((a, b) => a.nim.localeCompare(b.nim));
-  } else if (config.mode === 'alphabetical') {
-    sortedStudents = [...activeStudents].sort((a, b) => a.name.localeCompare(b.name));
-  } else {
-    sortedStudents = [...activeStudents];
-  }
-
   const courseMap = new Map<string, Course>();
   courses.forEach((c) => courseMap.set(c.id, c));
 
@@ -261,15 +347,20 @@ export function generateGlobalRotationSchedule(
     return timeA.localeCompare(timeB);
   });
 
-  // Now distribute students fairly across all sessions in continuous round-robin
-  let studentPool = [...sortedStudents];
-  let poolIndex = 0;
-  const count = Math.max(1, config.pjCountPerSession);
-
-  // Keep track of assignments per week to avoid double assignment in same week if possible
+  // Track duty counts, last assigned session index, and course histories across all sessions
+  const dutyCountMap = new Map<string, number>();
+  const lastAssignedIndexMap = new Map<string, number>();
+  const courseHistoryMap = new Map<string, Map<string, number>>();
   const weekAssignments = new Map<number, Set<string>>();
 
-  const updatedSessions: SessionSchedule[] = allSessions.map((session) => {
+  activeStudents.forEach((s) => {
+    dutyCountMap.set(s.id, 0);
+    courseHistoryMap.set(s.id, new Map());
+  });
+
+  const count = Math.max(1, config.pjCountPerSession);
+
+  const updatedSessions: SessionSchedule[] = allSessions.map((session, sessionIdx) => {
     const course = courseMap.get(session.courseId);
     const isPracticum = isPracticumCourse(course);
     const isExcluded = isPracticum || config.excludeSessionNumbers?.includes(session.sessionNumber);
@@ -286,28 +377,30 @@ export function generateGlobalRotationSchedule(
 
     const assignedIds: string[] = [];
     for (let p = 0; p < count; p++) {
-      if (poolIndex >= studentPool.length) {
-        studentPool = config.mode === 'fair_random' ? shuffleArray(activeStudents) : [...sortedStudents];
-        poolIndex = 0;
+      const candidate = pickFairestCandidateStudent(
+        activeStudents,
+        assignedIds,
+        assignedThisWeek,
+        dutyCountMap,
+        lastAssignedIndexMap,
+        courseHistoryMap,
+        sessionIdx,
+        session.courseId,
+        config.mode === 'fair_random',
+        config.mode
+      );
+
+      if (candidate) {
+        assignedIds.push(candidate.id);
+        assignedThisWeek.add(candidate.id);
+
+        dutyCountMap.set(candidate.id, (dutyCountMap.get(candidate.id) || 0) + 1);
+        lastAssignedIndexMap.set(candidate.id, sessionIdx);
+
+        const cMap = courseHistoryMap.get(candidate.id) || new Map();
+        cMap.set(session.courseId, (cMap.get(session.courseId) || 0) + 1);
+        courseHistoryMap.set(candidate.id, cMap);
       }
-
-      let candidate = studentPool[poolIndex];
-      let searchAttempts = 0;
-      const canAvoidSameWeek = assignedThisWeek.size < activeStudents.length;
-
-      while (
-        (assignedIds.includes(candidate.id) ||
-          (canAvoidSameWeek && assignedThisWeek.has(candidate.id))) &&
-        searchAttempts < studentPool.length
-      ) {
-        poolIndex = (poolIndex + 1) % studentPool.length;
-        candidate = studentPool[poolIndex];
-        searchAttempts++;
-      }
-
-      assignedIds.push(candidate.id);
-      assignedThisWeek.add(candidate.id);
-      poolIndex++;
     }
 
     return {
