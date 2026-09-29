@@ -20,7 +20,11 @@ import {
   BookOpen, 
   AlertCircle,
   Sparkles,
-  Users
+  Users,
+  Copy,
+  ExternalLink,
+  MessageSquare,
+  X
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -55,6 +59,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [copiedSessionId, setCopiedSessionId] = useState<string | null>(null);
   const [copiedWeekDigest, setCopiedWeekDigest] = useState(false);
   const [personalSearchQuery, setPersonalSearchQuery] = useState(currentStudentNim || '');
+  const [isWaModalOpen, setIsWaModalOpen] = useState(false);
+  const [editableWaText, setEditableWaText] = useState('');
 
   // Calculate maximum total sessions across courses (usually 16)
   const maxSessions = useMemo(() => {
@@ -180,6 +186,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setTimeout(() => setCopiedWeekDigest(false), 2500);
   };
 
+  // Open WhatsApp Preview Modal
+  const openWaModal = () => {
+    const text = generateWeeklyWhatsAppMessage(selectedWeek, courses, sessions, students);
+    setEditableWaText(text);
+    setIsWaModalOpen(true);
+  };
+
   // If no courses added yet
   if (courses.length === 0) {
     return (
@@ -291,8 +304,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="flex items-center gap-2">
             <button
               onClick={handleCopyWeekWA}
-              className="inline-flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer"
-              title="Salin rekap jadwal minggu ini untuk WhatsApp"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold shadow-xs transition cursor-pointer"
+              title="Salin rekap jadwal minggu ini ke clipboard (Format ringkas & rapi)"
             >
               {copiedWeekDigest ? (
                 <>
@@ -301,10 +314,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </>
               ) : (
                 <>
-                  <Share2 className="w-4 h-4" />
-                  <span>Bagikan Jadwal Minggu Ke-{selectedWeek} (WA)</span>
+                  <Copy className="w-4 h-4" />
+                  <span>Salin Jadwal WA</span>
                 </>
               )}
+            </button>
+
+            <button
+              onClick={openWaModal}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold border border-slate-200 transition cursor-pointer"
+              title="Lihat pratinjau teks atau kirim langsung ke aplikasi WhatsApp"
+            >
+              <Share2 className="w-3.5 h-3.5 text-slate-500" />
+              <span className="hidden sm:inline">Pratinjau / Kirim</span>
             </button>
           </div>
         </div>
@@ -691,6 +713,86 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* WhatsApp Preview & Direct Share Modal */}
+      {isWaModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs no-print">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                  <MessageSquare className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-snug">
+                    Format WhatsApp Minggu Ke-{selectedWeek}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Format sederhana, rapi, dan ringkas untuk dibagikan ke grup kelas
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsWaModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer rounded-lg hover:bg-slate-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span className="font-semibold text-slate-700">Pratinjau Teks (Dapat Diedit):</span>
+                <span className="text-[11px] font-mono text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  Siap Kirim
+                </span>
+              </div>
+              <textarea
+                rows={9}
+                value={editableWaText}
+                onChange={(e) => setEditableWaText(e.target.value)}
+                className="w-full font-mono text-xs p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800 leading-relaxed scrollbar-thin"
+              />
+            </div>
+
+            <div className="pt-2 flex flex-col sm:flex-row items-center justify-end gap-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(editableWaText);
+                  setCopiedWeekDigest(true);
+                  setTimeout(() => setCopiedWeekDigest(false), 2500);
+                }}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-semibold border border-slate-200 transition cursor-pointer"
+              >
+                {copiedWeekDigest ? (
+                  <>
+                    <Check className="w-4 h-4 text-emerald-600" />
+                    <span>Tersalin ke Clipboard!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4 text-slate-600" />
+                    <span>Salin Teks (Copy)</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(editableWaText)}`;
+                  window.open(url, '_blank');
+                }}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition cursor-pointer"
+              >
+                <ExternalLink className="w-4 h-4" />
+                <span>Buka di WhatsApp Langsung</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -323,7 +323,7 @@ export function swapPjBetweenSessions(
 }
 
 /**
- * Generate formatted WhatsApp broadcast message for a single class session
+ * Generate formatted WhatsApp broadcast message for a single class session (compact & neat)
  */
 export function generateWhatsAppMessage(
   courseName: string,
@@ -335,42 +335,31 @@ export function generateWhatsAppMessage(
   assignedStudents: Student[]
 ): string {
   const pjList = assignedStudents.length > 0
-    ? assignedStudents.map((s, idx) => `   ${idx + 1}. *${s.name}* (${s.nim})${s.phone ? ` - ${s.phone}` : ''}`).join('\n')
-    : '   _(Belum ditentukan)_';
+    ? assignedStudents.map((s) => `*${s.name}* (${s.nim})`).join(', ')
+    : '_(Belum ditentukan)_';
 
   const dateFormatted = new Date(session.date).toLocaleDateString('id-ID', {
-    weekday: 'long',
     day: 'numeric',
-    month: 'long',
+    month: 'short',
     year: 'numeric',
   });
 
-  return `📢 *PENGINGAT PENANGGUNG JAWAB (PJ) KULIAH* 📢
+  return `📢 *PENGINGAT PJ PERKULIAHAN*
+━━━━━━━━━━━━━━━━━━━━
+📚 *${courseName}* (Pertemuan ${session.sessionNumber})
+🗓️ ${day}, ${dateFormatted} | ⏰ ${time} WIB
+📍 Ruang: ${room || '-'}
+👨‍🏫 Dosen: ${lecturer || '-'}
+🎯 Materi: ${session.topic}
 
-Halo rekan-rekan kelas, berikut adalah informasi jadwal perkuliahan dan PJ yang bertugas:
-
-📚 *Mata Kuliah:* ${courseName}
-👨‍🏫 *Dosen Pengampu:* ${lecturer}
-🗓️ *Pertemuan Ke:* ${session.sessionNumber}
-📅 *Hari, Tanggal:* ${day}, ${dateFormatted}
-⏰ *Waktu:* ${time} WIB
-📍 *Ruang / Lab:* ${room}
-🎯 *Materi / Topik:* ${session.topic}
-
-👤 *Penanggung Jawab (PJ) Bertugas:*
-${pjList}
-
-${session.notes ? `📝 *Catatan Khusus:* \n${session.notes}\n` : ''}
-⚠️ *Tugas PJ:*
-1. Mengonfirmasi kehadiran Dosen Pengampu minimal H-1 / sebelum jam kuliah.
-2. Membantu persiapan ruang kuliah, proyektor / perangkat lab jika offline, atau link meeting jika online.
-3. Mencatat presensi kehadiran dan membantu mendokumentasikan jalannya perkuliahan.
-
-Terima kasih atas kerja samanya! 🙏✨`;
+👤 *PJ Bertugas:* ${pjList}
+${session.notes ? `📝 *Catatan:* ${session.notes}\n` : ''}
+⚠️ *Tugas PJ:* Konfirmasi kehadiran dosen H-1, siapkan ruang/proyektor, & dampingi presensi. Terima kasih! 🙏✨`;
 }
 
 /**
- * Generate formatted WhatsApp digest for an entire week across all courses
+ * Generate clean, compact, and neat WhatsApp digest for an entire week across all courses.
+ * Designed specifically for WhatsApp class groups (readable in 1 screen, simple, no clutter).
  */
 export function generateWeeklyWhatsAppMessage(
   weekNumber: number,
@@ -392,8 +381,11 @@ export function generateWeeklyWhatsAppMessage(
     return (cA?.startTime || '').localeCompare(cB?.startTime || '');
   });
 
-  let message = `📢 *JADWAL KULIAH & ROTASI PJ MINGGU KE-${weekNumber}* 📢\n`;
-  message += `Daftar perkuliahan & penanggung jawab kelas minggu ini:\n`;
+  if (sorted.length === 0) {
+    return `📋 *JADWAL KULIAH & PJ MINGGU KE-${weekNumber}*\n\nTidak ada perkuliahan terjadwal untuk minggu ini.`;
+  }
+
+  let message = `📋 *JADWAL KULIAH & PJ MINGGU KE-${weekNumber}*\n`;
   message += `━━━━━━━━━━━━━━━━━━━━━\n\n`;
 
   let currentDay = '';
@@ -403,25 +395,23 @@ export function generateWeeklyWhatsAppMessage(
 
     if (course.day.trim().toLowerCase() !== currentDay.trim().toLowerCase()) {
       currentDay = course.day;
-      message += `📌 *HARI ${currentDay.toUpperCase()}*\n`;
+      message += `🗓️ *${currentDay.toUpperCase()}*\n`;
     }
 
     const pjs = session.assignedPjIds
-      .map((id) => {
-        const st = studentMap.get(id);
-        return st ? `${st.name} (${st.nim})` : 'Mahasiswa';
-      })
+      .map((id) => studentMap.get(id)?.name)
+      .filter(Boolean)
       .join(', ');
 
-    message += `📚 *${course.name}*\n`;
-    message += `   ⏰ ${course.startTime} - ${course.endTime} WIB | 📍 ${course.room}\n`;
-    message += `   👨‍🏫 ${course.lecturer}\n`;
-    message += `   🎯 Topik: ${session.topic}\n`;
-    message += `   👤 PJ: *${pjs || 'Belum ditentukan'}*\n\n`;
+    const timeStr = `${course.startTime} - ${course.endTime}`;
+    const roomStr = course.room ? ` | ${course.room}` : '';
+
+    message += `• *${course.name}* (${timeStr}${roomStr})\n`;
+    message += `  PJ: ${pjs ? `*${pjs}*` : '_Belum ada PJ_'}\n\n`;
   });
 
   message += `━━━━━━━━━━━━━━━━━━━━━\n`;
-  message += `⚠️ *Pengingat PJ:* Mohon konfirmasi dosen minimal H-1, persiapkan ruangan/link perkuliahan, dan dampingi presensi kelas. Terima kasih! 🙏✨`;
+  message += `⚠️ *Catatan:* PJ mohon konfirmasi dosen H-1 & siapkan kelas. Semangat! ✨`;
 
   return message;
 }
