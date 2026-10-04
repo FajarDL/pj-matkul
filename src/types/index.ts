@@ -89,9 +89,30 @@ export interface CoursePreset {
   isPracticum?: boolean;
 }
 
+export type MaterialCategory = 'slide' | 'module' | 'assignment' | 'recording' | 'other';
+export type MaterialType = 'file' | 'link';
+
+export interface CourseMaterial {
+  id: string;
+  courseId: string;
+  sessionNumber: number; // 1 to 16
+  title: string;
+  type: MaterialType;
+  category: MaterialCategory;
+  fileName?: string;
+  fileSize?: number; // bytes
+  fileType?: string; // extension without dot, e.g. 'pdf', 'pptx'
+  fileBlobId?: string; // key in IndexedDB
+  url?: string; // URL for link type
+  notes?: string;
+  uploadedAt: string; // ISO string
+  uploadedBy?: string;
+}
+
 export interface AppState {
   courses: Course[];
   students: Student[];
   sessions: SessionSchedule[];
+  materials?: CourseMaterial[];
   activeCourseId: string | null;
 }

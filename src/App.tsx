@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
-import type { AppState, Course, SessionSchedule, Student, SessionStatus, AuthSession } from './types';
+import type { AppState, Course, SessionSchedule, Student, SessionStatus, AuthSession, CourseMaterial } from './types';
 import { storageService } from './services/storageService';
 import { authService } from './services/authService';
+import { materialStorageService } from './services/materialStorageService';
 import { Navbar } from './components/Navbar';
 import { DashboardView } from './components/DashboardView';
 import { ScheduleView } from './components/ScheduleView';
 import { StudentManager } from './components/StudentManager';
 import { CourseManager } from './components/CourseManager';
+import { MaterialManager } from './components/MaterialManager';
 import { PrintScheduleView } from './components/PrintScheduleView';
 import { LoginModal } from './components/LoginModal';
 import { SecuritySettingsModal } from './components/SecuritySettingsModal';
@@ -19,7 +21,9 @@ export function App() {
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'schedule' | 'students' | 'courses'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'schedule' | 'students' | 'courses' | 'materials'>('dashboard');
+  const [selectedMaterialCourseId, setSelectedMaterialCourseId] = useState<string | null>(null);
+  const [selectedMaterialSessionNumber, setSelectedMaterialSessionNumber] = useState<number | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Handle URL reset flags (e.g. ?reset=true or ?reset=auth)
@@ -197,23 +201,30 @@ export function App() {
     }
   };
 
-  const handleDeleteCourse = (courseId: string) => {
+  const handleDeleteCourse = async (courseId: string) => {
+    const materialsToDelete = (data.materials || []).filter((m) => m.courseId === courseId);
+    if (materialsToDelete.length > 0) {
+      await materialStorageService.deleteFilesByMaterialIds(materialsToDelete.map((m) => m.id));
+    }
+
     setData((prev) => {
       const remainingCourses = prev.courses.filter((c) => c.id !== courseId);
       const remainingSessions = prev.sessions.filter((s) => s.courseId !== courseId);
+      const remainingMaterials = (prev.materials || []).filter((m) => m.courseId !== courseId);
       const newActiveId = remainingCourses[0]?.id || null;
       return {
         ...prev,
         courses: remainingCourses,
         sessions: remainingSessions,
+        materials: remainingMaterials,
         activeCourseId: newActiveId,
       };
     });
     showToast('Mata kuliah berhasil dihapus');
   };
 
-  // Delete all courses (keeps students intact, clears sessions)
-  const handleDeleteAllCourses = (skipConfirm: boolean = false) => {
+  // Delete all courses (keeps students intact, clears sessions and materials)
+  const handleDeleteAllCourses = async (skipConfirm: boolean = false) => {
     if (data.courses.length === 0) {
       showToast('Tidak ada mata kuliah yang terdaftar');
       return;
@@ -221,17 +232,50 @@ export function App() {
     if (
       skipConfirm ||
       confirm(
-        `Apakah Anda yakin ingin menghapus SELURUH mata kuliah (${data.courses.length} mata kuliah)?\n\nSeluruh jadwal sesi dan rotasi PJ yang terkait akan dihapus. Data mahasiswa akan tetap aman.`
+        `Apakah Anda yakin ingin menghapus SELURUH mata kuliah (${data.courses.length} mata kuliah)?\n\nSeluruh jadwal sesi, materi kuliah, dan rotasi PJ yang terkait akan dihapus. Data mahasiswa akan tetap aman.`
       )
     ) {
+      const allMaterialIds = (data.materials || []).map((m) => m.id);
+      if (allMaterialIds.length > 0) {
+        await materialStorageService.deleteFilesByMaterialIds(allMaterialIds);
+      }
+
       setData((prev) => ({
         ...prev,
         courses: [],
         sessions: [],
+        materials: [],
         activeCourseId: null,
       }));
       showToast('Seluruh mata kuliah dan jadwal berhasil dihapus');
     }
+  };
+
+  // Handlers for Course Materials
+  const handleAddMaterial = async (material: CourseMaterial, file?: File) => {
+    if (file) {
+      await materialStorageService.saveFileBlob(material.id, file);
+    }
+    setData((prev) => ({
+      ...prev,
+      materials: [...(prev.materials || []), material],
+    }));
+    showToast(`Materi "${material.title}" berhasil ditambahkan!`);
+  };
+
+  const handleDeleteMaterial = async (materialId: string) => {
+    await materialStorageService.deleteFileBlob(materialId);
+    setData((prev) => ({
+      ...prev,
+      materials: (prev.materials || []).filter((m) => m.id !== materialId),
+    }));
+    showToast('Materi berhasil dihapus.');
+  };
+
+  const handleNavigateToMaterials = (courseId?: string, sessionNumber?: number) => {
+    setSelectedMaterialCourseId(courseId || null);
+    setSelectedMaterialSessionNumber(sessionNumber || null);
+    setActiveTab('materials');
   };
 
   // Handlers for Students
@@ -301,8 +345,12 @@ export function App() {
     }
   };
 
-  const handleReset = (skipConfirm: boolean = false) => {
-    if (skipConfirm || confirm('Apakah Anda yakin ingin menghapus seluruh data? Semua mata kuliah, jadwal, dan daftar mahasiswa akan dikosongkan.')) {
+  const handleReset = async (skipConfirm: boolean = false) => {
+    if (skipConfirm || confirm('Apakah Anda yakin ingin menghapus seluruh data? Semua mata kuliah, jadwal, materi, dan daftar mahasiswa akan dikosongkan.')) {
+      const allMaterialIds = (data.materials || []).map((m) => m.id);
+      if (allMaterialIds.length > 0) {
+        await materialStorageService.deleteFilesByMaterialIds(allMaterialIds);
+      }
       const emptyData = storageService.clearAllData();
       setData(emptyData);
       showToast('Seluruh data berhasil dihapus dan dikosongkan.');
@@ -414,6 +462,7 @@ export function App() {
             courses={data.courses}
             students={data.students}
             sessions={data.sessions}
+            materials={data.materials || []}
             userRole={authSession.role}
             currentStudentNim={authSession.studentNim}
             onNavigateToSchedule={(courseId) => {
@@ -422,6 +471,7 @@ export function App() {
             }}
             onNavigateToCourses={() => setActiveTab('courses')}
             onNavigateToStudents={() => setActiveTab('students')}
+            onNavigateToMaterials={handleNavigateToMaterials}
             onToggleSessionStatus={handleToggleSessionStatus}
             onOpenGlobalRotationModal={() => {
               setActiveTab('schedule');
@@ -439,10 +489,25 @@ export function App() {
             courses={data.courses}
             students={data.students}
             sessions={data.sessions}
+            materials={data.materials || []}
             userRole={authSession.role}
             course={activeCourse}
+            onNavigateToMaterials={handleNavigateToMaterials}
             onUpdateSessions={handleUpdateSessions}
             onRequestLogin={() => setIsLoginModalOpen(true)}
+          />
+        )}
+
+        {activeTab === 'materials' && (
+          <MaterialManager
+            courses={data.courses}
+            sessions={data.sessions}
+            materials={data.materials || []}
+            initialCourseId={selectedMaterialCourseId}
+            initialSessionNumber={selectedMaterialSessionNumber}
+            onAddMaterial={handleAddMaterial}
+            onDeleteMaterial={handleDeleteMaterial}
+            onRequestToast={showToast}
           />
         )}
       </main>

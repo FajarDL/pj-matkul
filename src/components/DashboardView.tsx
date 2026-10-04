@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import type { Course, Student, SessionSchedule, UserRole } from '../types';
+import type { Course, Student, SessionSchedule, UserRole, CourseMaterial } from '../types';
 import { 
   generateWhatsAppMessage, 
   generateWeeklyWhatsAppMessage, 
@@ -37,7 +37,8 @@ import {
   UserCheck,
   UserPlus,
   Undo2,
-  History
+  History,
+  FolderOpen
 } from 'lucide-react';
 import { authService } from '../services/authService';
 
@@ -45,11 +46,13 @@ interface DashboardViewProps {
   courses: Course[];
   students: Student[];
   sessions: SessionSchedule[];
+  materials?: CourseMaterial[];
   userRole: UserRole;
   currentStudentNim?: string;
   onNavigateToSchedule: (courseId?: string) => void;
   onNavigateToCourses: () => void;
   onNavigateToStudents: () => void;
+  onNavigateToMaterials?: (courseId?: string, sessionNumber?: number) => void;
   onToggleSessionStatus: (sessionId: string) => void;
   onOpenGlobalRotationModal?: () => void;
   onRequestLogin?: () => void;
@@ -71,11 +74,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   courses,
   students,
   sessions,
+  materials = [],
   userRole,
   currentStudentNim,
   onNavigateToSchedule,
   onNavigateToCourses,
   onNavigateToStudents,
+  onNavigateToMaterials,
   onToggleSessionStatus,
   onOpenGlobalRotationModal,
   onRequestLogin,
@@ -104,6 +109,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [swapTargetSessionId, setSwapTargetSessionId] = useState<string>('');
   const [swapSourceStudentId, setSwapSourceStudentId] = useState<string>('');
   const [swapTargetStudentId, setSwapTargetStudentId] = useState<string>('');
+
+  // Count materials mapped by courseId-sessionNumber
+  const materialCountBySession = useMemo(() => {
+    const map: Record<string, number> = {};
+    (materials || []).forEach((m) => {
+      const key = `${m.courseId}-${m.sessionNumber}`;
+      map[key] = (map[key] || 0) + 1;
+    });
+    return map;
+  }, [materials]);
 
   // Undo Toast Notification State
   const [undoToast, setUndoToast] = useState<UndoToastState | null>(null);
@@ -1750,6 +1765,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
                           {/* Action Buttons */}
                           <div className="flex items-center gap-2 pt-1 sm:pt-0">
+                            {/* Materials Button */}
+                            {onNavigateToMaterials && (
+                              <button
+                                type="button"
+                                onClick={() => onNavigateToMaterials(course.id, session.sessionNumber)}
+                                title={`Buka atau unggah materi pertemuan ke-${session.sessionNumber}`}
+                                className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-semibold border border-indigo-200 transition cursor-pointer"
+                              >
+                                <FolderOpen className="w-3.5 h-3.5 text-indigo-600" />
+                                <span className="hidden sm:inline">Materi</span>
+                                {(materialCountBySession[`${course.id}-${session.sessionNumber}`] || 0) > 0 && (
+                                  <span className="bg-indigo-600 text-white text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+                                    {materialCountBySession[`${course.id}-${session.sessionNumber}`]}
+                                  </span>
+                                )}
+                              </button>
+                            )}
+
                             {/* Copy WhatsApp Button */}
                             <button
                               onClick={() => handleCopySingleWA(session, course)}

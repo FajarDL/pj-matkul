@@ -10,12 +10,13 @@ import {
   RotateCcw, 
   GraduationCap,
   Lock,
-  KeyRound
+  KeyRound,
+  FolderOpen
 } from 'lucide-react';
 
 interface NavbarProps {
-  activeTab: 'dashboard' | 'schedule' | 'students' | 'courses';
-  setActiveTab: (tab: 'dashboard' | 'schedule' | 'students' | 'courses') => void;
+  activeTab: 'dashboard' | 'schedule' | 'students' | 'courses' | 'materials';
+  setActiveTab: (tab: 'dashboard' | 'schedule' | 'students' | 'courses' | 'materials') => void;
   courses?: Course[];
   activeCourseId?: string | null;
   userRole: UserRole;
@@ -197,6 +198,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <BookOpen className="w-4 h-4" />
               <span>Mata Kuliah</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('materials')}
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-semibold rounded-lg transition whitespace-nowrap cursor-pointer ${
+                activeTab === 'materials'
+                  ? 'bg-indigo-600 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <FolderOpen className="w-4 h-4" />
+              <span>Materi Kuliah</span>
             </button>
           </nav>
         </div>

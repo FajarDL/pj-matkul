@@ -16,7 +16,10 @@ export const storageService = {
       if (!parsed.courses || !parsed.students || !parsed.sessions) {
         return this.getDefaultData();
       }
-      return parsed;
+      return {
+        ...parsed,
+        materials: Array.isArray(parsed.materials) ? parsed.materials : [],
+      };
     } catch (error) {
       console.error('Failed to load data from localStorage:', error);
       return this.getDefaultData();
@@ -36,6 +39,7 @@ export const storageService = {
       courses: [],
       students: [],
       sessions: [],
+      materials: [],
       activeCourseId: null,
     };
   },
@@ -67,6 +71,7 @@ export const storageService = {
           const content = e.target?.result as string;
           const parsed = JSON.parse(content);
           if (Array.isArray(parsed.courses) && Array.isArray(parsed.students)) {
+            parsed.materials = Array.isArray(parsed.materials) ? parsed.materials : [];
             resolve(parsed as AppState);
           } else {
             reject(new Error('Format file cadangan data tidak valid.'));

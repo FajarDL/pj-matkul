@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import type { Course, Student, SessionSchedule, RotationConfig, SessionStatus, UserRole } from '../types';
+import type { Course, Student, SessionSchedule, RotationConfig, SessionStatus, UserRole, CourseMaterial } from '../types';
 import { 
   generateRotationSchedule, 
   generateGlobalRotationSchedule,
@@ -21,16 +21,19 @@ import {
   Info,
   Lock,
   Layers,
-  Sparkles
+  Sparkles,
+  FolderOpen
 } from 'lucide-react';
 
 interface ScheduleViewProps {
   courses: Course[];
   students: Student[];
   sessions: SessionSchedule[];
+  materials?: CourseMaterial[];
   userRole: UserRole;
   course?: Course;
   onUpdateSessions: (newSessions: SessionSchedule[]) => void;
+  onNavigateToMaterials?: (courseId?: string, sessionNumber?: number) => void;
   onRequestLogin?: () => void;
 }
 
@@ -38,9 +41,11 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   courses,
   students,
   sessions,
+  materials = [],
   userRole,
   course,
   onUpdateSessions,
+  onNavigateToMaterials,
   onRequestLogin,
 }) => {
   const isAdmin = userRole === 'owner' || userRole === 'admin';
@@ -75,6 +80,16 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
     courses.forEach((c) => map.set(c.id, c));
     return map;
   }, [courses]);
+
+  // Count materials mapped by courseId-sessionNumber
+  const materialCountBySession = useMemo(() => {
+    const map: Record<string, number> = {};
+    (materials || []).forEach((m) => {
+      const key = `${m.courseId}-${m.sessionNumber}`;
+      map[key] = (map[key] || 0) + 1;
+    });
+    return map;
+  }, [materials]);
 
   const activeCourse = selectedCourseId !== 'all' ? courseMap.get(selectedCourseId) : null;
 
@@ -611,6 +626,20 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
                       <td className="py-3.5 px-4 text-right no-print whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1">
+                          {onNavigateToMaterials && (
+                            <button
+                              onClick={() => onNavigateToMaterials(session.courseId, session.sessionNumber)}
+                              title={`Buka folder materi pertemuan ke-${session.sessionNumber}`}
+                              className="p-1.5 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg transition cursor-pointer relative"
+                            >
+                              <FolderOpen className="w-4 h-4" />
+                              {(materialCountBySession[`${session.courseId}-${session.sessionNumber}`] || 0) > 0 && (
+                                <span className="absolute -top-1 -right-1 bg-indigo-600 text-white text-[9px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
+                                  {materialCountBySession[`${session.courseId}-${session.sessionNumber}`]}
+                                </span>
+                              )}
+                            </button>
+                          )}
                           <button
                             onClick={() => handleCopyWA(session)}
                             title="Salin Pesan Format WhatsApp"
