@@ -527,6 +527,7 @@ export function App() {
           <TreasuryManager
             transactions={data.transactions || []}
             userRole={authSession.role}
+            userName={authSession.name || authSession.username}
             onUpdateTransactions={handleUpdateTransactions}
             onRequestLogin={() => setIsLoginModalOpen(true)}
             onRequestToast={showToast}

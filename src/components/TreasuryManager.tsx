@@ -8,21 +8,20 @@ import {
   Share2, 
   Check, 
   Search, 
-  Filter, 
   Trash2, 
   Edit2, 
   X, 
   ReceiptText,
-  Calendar,
   Lock
 } from 'lucide-react';
 
 interface TreasuryManagerProps {
   transactions: CashTransaction[];
   userRole: UserRole;
-  userName: string;
+  userName?: string;
   onUpdateTransactions: (transactions: CashTransaction[]) => void;
   onRequestLogin?: () => void;
+  onRequestToast?: (message: string) => void;
 }
 
 const INCOME_CATEGORIES = [
@@ -88,9 +87,10 @@ export function generateCashWhatsAppMessage(
 export const TreasuryManager: React.FC<TreasuryManagerProps> = ({
   transactions,
   userRole,
-  userName,
+  userName = '',
   onUpdateTransactions,
   onRequestLogin,
+  onRequestToast,
 }) => {
   const isAdmin = userRole === 'owner' || userRole === 'admin';
 
@@ -244,6 +244,11 @@ export const TreasuryManager: React.FC<TreasuryManagerProps> = ({
       onUpdateTransactions([newTransaction, ...transactions]);
     }
 
+    if (editingTransaction) {
+      onRequestToast?.('Transaksi berhasil diperbarui');
+    } else {
+      onRequestToast?.('Transaksi baru berhasil dicatat');
+    }
     setIsModalOpen(false);
   };
 
@@ -255,6 +260,7 @@ export const TreasuryManager: React.FC<TreasuryManagerProps> = ({
     }
     if (confirm(`Hapus catatan transaksi "${desc}"?`)) {
       onUpdateTransactions(transactions.filter((t) => t.id !== id));
+      onRequestToast?.(`Catatan "${desc}" berhasil dihapus`);
     }
   };
 
@@ -268,6 +274,7 @@ export const TreasuryManager: React.FC<TreasuryManagerProps> = ({
     );
     navigator.clipboard.writeText(text);
     setIsCopied(true);
+    onRequestToast?.('Rekap kas WA berhasil disalin ke clipboard');
     setTimeout(() => setIsCopied(false), 2500);
   };
 
