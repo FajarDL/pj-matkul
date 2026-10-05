@@ -11,12 +11,13 @@ import {
   GraduationCap,
   Lock,
   KeyRound,
-  FolderOpen
+  FolderOpen,
+  Wallet
 } from 'lucide-react';
 
 interface NavbarProps {
-  activeTab: 'dashboard' | 'schedule' | 'students' | 'courses' | 'materials';
-  setActiveTab: (tab: 'dashboard' | 'schedule' | 'students' | 'courses' | 'materials') => void;
+  activeTab: 'dashboard' | 'schedule' | 'students' | 'courses' | 'materials' | 'treasury';
+  setActiveTab: (tab: 'dashboard' | 'schedule' | 'students' | 'courses' | 'materials' | 'treasury') => void;
   courses?: Course[];
   activeCourseId?: string | null;
   userRole: UserRole;
@@ -210,6 +211,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <FolderOpen className="w-4 h-4" />
               <span>Materi Kuliah</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('treasury')}
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs sm:text-sm font-semibold rounded-lg transition whitespace-nowrap cursor-pointer ${
+                activeTab === 'treasury'
+                  ? 'bg-slate-900 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <Wallet className="w-4 h-4" />
+              <span>Bendahara</span>
             </button>
           </nav>
         </div>
