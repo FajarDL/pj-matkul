@@ -1,11 +1,11 @@
 {
-  "name": "rotasi-pj-matkul",
+  "name": "pj-matkul",
   "private": true,
   "version": "1.0.0",
-  "description": "Sistem Informasi Manajemen Rotasi Penanggung Jawab Perkuliahan",
+  "description": "Sistem Informasi Penjadwalan Penanggung Jawab Perkuliahan",
   "repository": {
     "type": "git",
-    "url": "https://github.com/FajarDL/rotasi-pj-matkul.git"
+    "url": "https://github.com/FajarDL/pj-matkul.git"
   },
   "type": "module",
   "scripts": {
