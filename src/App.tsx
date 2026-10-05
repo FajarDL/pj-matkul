@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { AppState, Course, SessionSchedule, Student, SessionStatus, AuthSession, CourseMaterial } from './types';
+import type { AppState, Course, SessionSchedule, Student, SessionStatus, AuthSession, CourseMaterial, CashTransaction } from './types';
 import { storageService } from './services/storageService';
 import { authService } from './services/authService';
 import { materialStorageService } from './services/materialStorageService';
@@ -9,6 +9,7 @@ import { ScheduleView } from './components/ScheduleView';
 import { StudentManager } from './components/StudentManager';
 import { CourseManager } from './components/CourseManager';
 import { MaterialManager } from './components/MaterialManager';
+import { TreasuryManager } from './components/TreasuryManager';
 import { PrintScheduleView } from './components/PrintScheduleView';
 import { LoginModal } from './components/LoginModal';
 import { SecuritySettingsModal } from './components/SecuritySettingsModal';
@@ -21,7 +22,7 @@ export function App() {
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'schedule' | 'students' | 'courses' | 'materials'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'schedule' | 'students' | 'courses' | 'materials' | 'treasury'>('dashboard');
   const [selectedMaterialCourseId, setSelectedMaterialCourseId] = useState<string | null>(null);
   const [selectedMaterialSessionNumber, setSelectedMaterialSessionNumber] = useState<number | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -278,6 +279,15 @@ export function App() {
     setActiveTab('materials');
   };
 
+  // Handlers for Treasury / Kas Kelas
+  const handleUpdateTransactions = (newTransactions: CashTransaction[]) => {
+    setData((prev) => ({
+      ...prev,
+      transactions: newTransactions,
+    }));
+    showToast('Data kas kelas berhasil diperbarui');
+  };
+
   // Handlers for Students
   const handleUpdateStudents = (newStudents: Student[]) => {
     setData((prev) => ({ ...prev, students: newStudents }));
@@ -463,6 +473,7 @@ export function App() {
             students={data.students}
             sessions={data.sessions}
             materials={data.materials || []}
+            transactions={data.transactions || []}
             userRole={authSession.role}
             currentStudentNim={authSession.studentNim}
             onNavigateToSchedule={(courseId) => {
@@ -472,6 +483,7 @@ export function App() {
             onNavigateToCourses={() => setActiveTab('courses')}
             onNavigateToStudents={() => setActiveTab('students')}
             onNavigateToMaterials={handleNavigateToMaterials}
+            onNavigateToTreasury={() => setActiveTab('treasury')}
             onToggleSessionStatus={handleToggleSessionStatus}
             onOpenGlobalRotationModal={() => {
               setActiveTab('schedule');
@@ -507,6 +519,17 @@ export function App() {
             initialSessionNumber={selectedMaterialSessionNumber}
             onAddMaterial={handleAddMaterial}
             onDeleteMaterial={handleDeleteMaterial}
+            onRequestToast={showToast}
+          />
+        )}
+
+        {activeTab === 'treasury' && (
+          <TreasuryManager
+            transactions={data.transactions || []}
+            userRole={authSession.role}
+            userName={authSession.name || authSession.username}
+            onUpdateTransactions={handleUpdateTransactions}
+            onRequestLogin={() => setIsLoginModalOpen(true)}
             onRequestToast={showToast}
           />
         )}

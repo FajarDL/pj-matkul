@@ -54,7 +54,8 @@ export function pickFairestCandidateStudent(
   currentSessionIndex: number,
   courseId?: string,
   randomize: boolean = true,
-  mode: RotationMode = 'fair_random'
+  mode: RotationMode = 'fair_random',
+  assignedLastWeek?: Set<string>
 ): Student | null {
   // Step 1: Filter out students already assigned in THIS exact session
   let candidates = activeStudents.filter((s) => !alreadyAssignedInSession.includes(s.id));
@@ -65,6 +66,14 @@ export function pickFairestCandidateStudent(
     const freeThisWeek = candidates.filter((s) => !assignedThisWeek.has(s.id));
     if (freeThisWeek.length > 0) {
       candidates = freeThisWeek;
+    }
+  }
+
+  // Step 2b: Avoid consecutive week duty if students are available who did not serve last week
+  if (assignedLastWeek && assignedLastWeek.size > 0 && activeStudents.length > 1) {
+    const freeLastWeek = candidates.filter((s) => !assignedLastWeek.has(s.id));
+    if (freeLastWeek.length > 0) {
+      candidates = freeLastWeek;
     }
   }
 
@@ -245,6 +254,182 @@ export function calculateStudentStats(
 }
 
 /**
+ * Strict Round-Robin Circular Queue Generator
+ * Generates an orderly queue rotation from student 1 to student N.
+ * Sessions are processed chronologically across all courses.
+ * Guarantees no double duty in the same week, and no consecutive-week duty.
+ */
+export function generateQueueRotationSchedule(
+  courses: Course[],
+  activeStudents: Student[],
+  config: RotationConfig,
+  existingSessions: SessionSchedule[] = []
+): SessionSchedule[] {
+  const courseMap = new Map<string, Course>();
+  courses.forEach((c) => courseMap.set(c.id, c));
+
+  // Determine student ordering based on mode
+  let orderedStudents = [...activeStudents];
+  if (config.mode === 'sequential_nim') {
+    orderedStudents.sort((a, b) => a.nim.localeCompare(b.nim));
+  } else if (config.mode === 'alphabetical') {
+    orderedStudents.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  // If sequential_queue: preserves the exact order of activeStudents!
+
+  const N = orderedStudents.length;
+  const startDateObj = config.startDate ? new Date(config.startDate) : new Date();
+  const sessionsByCourse: Map<string, SessionSchedule[]> = new Map();
+
+  courses.forEach((course) => {
+    const list: SessionSchedule[] = [];
+    const courseExisting = existingSessions.filter((s) => s.courseId === course.id);
+
+    for (let sNum = 1; sNum <= course.totalSessions; sNum++) {
+      const existing = courseExisting.find((s) => s.sessionNumber === sNum);
+      if (existing) {
+        list.push({ ...existing });
+      } else {
+        const sessionDate = new Date(startDateObj);
+        sessionDate.setDate(startDateObj.getDate() + (sNum - 1) * (config.intervalDays || 7));
+        const dateStr = sessionDate.toISOString().split('T')[0];
+
+        let defaultTopic = `Pertemuan ${sNum} - ${course.name}`;
+        if (sNum === 8) defaultTopic = `Ujian Tengah Semester (UTS) - ${course.name}`;
+        if (sNum === course.totalSessions) defaultTopic = `Ujian Akhir Semester (UAS) - ${course.name}`;
+
+        list.push({
+          id: `sess-${course.id}-${sNum}-${Date.now()}`,
+          courseId: course.id,
+          sessionNumber: sNum,
+          date: dateStr,
+          topic: defaultTopic,
+          assignedPjIds: [],
+          status: 'upcoming',
+        });
+      }
+    }
+    sessionsByCourse.set(course.id, list);
+  });
+
+  // Flatten all sessions
+  const allSessions: SessionSchedule[] = [];
+  sessionsByCourse.forEach((list) => allSessions.push(...list));
+
+  // Sort sessions chronologically across all courses
+  allSessions.sort((a, b) => {
+    if (a.sessionNumber !== b.sessionNumber) {
+      return a.sessionNumber - b.sessionNumber;
+    }
+    const courseA = courseMap.get(a.courseId);
+    const courseB = courseMap.get(b.courseId);
+    const dayOrderA = getDayOrder(courseA?.day || '');
+    const dayOrderB = getDayOrder(courseB?.day || '');
+    if (dayOrderA !== dayOrderB) {
+      return dayOrderA - dayOrderB;
+    }
+    const timeA = courseA?.startTime || '00:00';
+    const timeB = courseB?.startTime || '00:00';
+    return timeA.localeCompare(timeB);
+  });
+
+  const weekAssignments = new Map<number, Set<string>>();
+  let queuePointer = 0;
+  const count = Math.max(1, config.pjCountPerSession);
+
+  return allSessions.map((session) => {
+    const course = courseMap.get(session.courseId);
+    const isPracticum = isPracticumCourse(course);
+    const isExcluded = isPracticum || config.excludeSessionNumbers?.includes(session.sessionNumber);
+
+    if (isExcluded) {
+      return { ...session, assignedPjIds: [], originalPjIds: [], isManuallyEdited: false, swapInfo: undefined };
+    }
+
+    const currentWeek = session.sessionNumber;
+    if (!weekAssignments.has(currentWeek)) {
+      weekAssignments.set(currentWeek, new Set<string>());
+    }
+    const assignedThisWeek = weekAssignments.get(currentWeek)!;
+    const assignedLastWeek = weekAssignments.get(currentWeek - 1) || new Set<string>();
+
+    const assignedIds: string[] = [];
+
+    for (let p = 0; p < count; p++) {
+      let chosen: Student | null = null;
+      let chosenIdx = -1;
+
+      // Pass 1: Strict - avoid same session, avoid same week, avoid last week (consecutive week)
+      for (let offset = 0; offset < N; offset++) {
+        const checkIdx = (queuePointer + offset) % N;
+        const candidate = orderedStudents[checkIdx];
+
+        if (assignedIds.includes(candidate.id)) continue;
+        if (assignedThisWeek.size < N && assignedThisWeek.has(candidate.id)) continue;
+
+        // Consecutive week avoidance
+        if (assignedLastWeek.has(candidate.id) && N > 1) {
+          const hasOtherCandidateFreeFromLastWeek = orderedStudents.some(
+            (other) =>
+              !assignedIds.includes(other.id) &&
+              (assignedThisWeek.size >= N || !assignedThisWeek.has(other.id)) &&
+              !assignedLastWeek.has(other.id)
+          );
+          if (hasOtherCandidateFreeFromLastWeek) {
+            continue;
+          }
+        }
+
+        chosen = candidate;
+        chosenIdx = checkIdx;
+        break;
+      }
+
+      // Pass 2: Relax consecutive week constraint if needed
+      if (!chosen) {
+        for (let offset = 0; offset < N; offset++) {
+          const checkIdx = (queuePointer + offset) % N;
+          const candidate = orderedStudents[checkIdx];
+
+          if (assignedIds.includes(candidate.id)) continue;
+          if (assignedThisWeek.size < N && assignedThisWeek.has(candidate.id)) continue;
+
+          chosen = candidate;
+          chosenIdx = checkIdx;
+          break;
+        }
+      }
+
+      // Pass 3: Ultimate fallback
+      if (!chosen) {
+        for (let offset = 0; offset < N; offset++) {
+          const checkIdx = (queuePointer + offset) % N;
+          const candidate = orderedStudents[checkIdx];
+          if (assignedIds.includes(candidate.id)) continue;
+          chosen = candidate;
+          chosenIdx = checkIdx;
+          break;
+        }
+      }
+
+      if (chosen) {
+        assignedIds.push(chosen.id);
+        assignedThisWeek.add(chosen.id);
+        queuePointer = (chosenIdx + 1) % N;
+      }
+    }
+
+    return {
+      ...session,
+      assignedPjIds: assignedIds,
+      originalPjIds: assignedIds,
+      isManuallyEdited: false,
+      swapInfo: undefined,
+    };
+  });
+}
+
+/**
  * Generates a global fair rotation schedule across ALL courses sequentially
  * so students take turns across the entire schedule rather than per-course duplicates.
  */
@@ -257,6 +442,15 @@ export function generateGlobalRotationSchedule(
   const activeStudents = students.filter((s) => s.isActive);
   if (activeStudents.length === 0 || courses.length === 0) {
     return existingSessions;
+  }
+
+  // If sequential_queue, sequential_nim, or alphabetical, run the strict circular queue generator
+  if (
+    config.mode === 'sequential_queue' ||
+    config.mode === 'sequential_nim' ||
+    config.mode === 'alphabetical'
+  ) {
+    return generateQueueRotationSchedule(courses, activeStudents, config, existingSessions);
   }
 
   const courseMap = new Map<string, Course>();
@@ -337,9 +531,8 @@ export function generateGlobalRotationSchedule(
     const isPracticum = isPracticumCourse(course);
     const isExcluded = isPracticum || config.excludeSessionNumbers?.includes(session.sessionNumber);
 
-    // If it's a practicum course or excluded session number, do not assign any PJ and do not consume rotation pool
     if (isExcluded) {
-      return { ...session, assignedPjIds: [] };
+      return { ...session, assignedPjIds: [], originalPjIds: [], isManuallyEdited: false, swapInfo: undefined };
     }
 
     const assignedIds: string[] = [];
@@ -354,6 +547,7 @@ export function generateGlobalRotationSchedule(
       assignedPjIds: assignedIds,
       originalPjIds: assignedIds,
       isManuallyEdited: false,
+      swapInfo: undefined,
     };
   });
 
@@ -361,7 +555,7 @@ export function generateGlobalRotationSchedule(
 }
 
 /**
- * Swaps PJ between two sessions
+ * Swaps PJ between two sessions (Mutual Swap / Barter Giliran)
  */
 export function swapPjBetweenSessions(
   sessions: SessionSchedule[],
@@ -370,6 +564,9 @@ export function swapPjBetweenSessions(
   sessionBId: string,
   studentBId: string
 ): SessionSchedule[] {
+  const sessionA = sessions.find((s) => s.id === sessionAId);
+  const sessionB = sessions.find((s) => s.id === sessionBId);
+
   return sessions.map((session) => {
     if (session.id === sessionAId) {
       const originalPjIds = session.originalPjIds !== undefined ? session.originalPjIds : [...session.assignedPjIds];
@@ -379,6 +576,12 @@ export function swapPjBetweenSessions(
         originalPjIds,
         assignedPjIds: newPjs,
         isManuallyEdited: true,
+        swapInfo: {
+          partnerSessionId: sessionBId,
+          originalStudentId: studentAId,
+          replacementStudentId: studentBId,
+          note: sessionB ? `Barter giliran dengan M-${sessionB.sessionNumber}` : 'Barter giliran PJ',
+        },
       };
     }
     if (session.id === sessionBId) {
@@ -389,6 +592,12 @@ export function swapPjBetweenSessions(
         originalPjIds,
         assignedPjIds: newPjs,
         isManuallyEdited: true,
+        swapInfo: {
+          partnerSessionId: sessionAId,
+          originalStudentId: studentBId,
+          replacementStudentId: studentAId,
+          note: sessionA ? `Barter giliran dengan M-${sessionA.sessionNumber}` : 'Barter giliran PJ',
+        },
       };
     }
     return session;
@@ -409,6 +618,7 @@ export function revertSessionToOriginal(
         ...session,
         assignedPjIds: targetPjIds,
         isManuallyEdited: false,
+        swapInfo: undefined,
       };
     }
     return session;

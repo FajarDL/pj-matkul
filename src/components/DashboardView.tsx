@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import type { Course, Student, SessionSchedule, UserRole, CourseMaterial } from '../types';
+import type { Course, Student, SessionSchedule, UserRole, CourseMaterial, CashTransaction } from '../types';
 import { 
   generateWhatsAppMessage, 
   generateWeeklyWhatsAppMessage, 
@@ -38,7 +38,8 @@ import {
   UserPlus,
   Undo2,
   History,
-  FolderOpen
+  FolderOpen,
+  Wallet
 } from 'lucide-react';
 import { authService } from '../services/authService';
 
@@ -47,12 +48,14 @@ interface DashboardViewProps {
   students: Student[];
   sessions: SessionSchedule[];
   materials?: CourseMaterial[];
+  transactions?: CashTransaction[];
   userRole: UserRole;
   currentStudentNim?: string;
   onNavigateToSchedule: (courseId?: string) => void;
   onNavigateToCourses: () => void;
   onNavigateToStudents: () => void;
   onNavigateToMaterials?: (courseId?: string, sessionNumber?: number) => void;
+  onNavigateToTreasury?: () => void;
   onToggleSessionStatus: (sessionId: string) => void;
   onOpenGlobalRotationModal?: () => void;
   onRequestLogin?: () => void;
@@ -75,12 +78,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   students,
   sessions,
   materials = [],
+  transactions = [],
   userRole,
   currentStudentNim,
   onNavigateToSchedule,
   onNavigateToCourses,
   onNavigateToStudents,
   onNavigateToMaterials,
+  onNavigateToTreasury,
   onToggleSessionStatus,
   onOpenGlobalRotationModal,
   onRequestLogin,
@@ -194,6 +199,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Active students stats
   const activeStudents = useMemo(() => students.filter((s) => s.isActive), [students]);
+
+  // Treasury summary for Kas Kelas
+  const treasurySummary = useMemo(() => {
+    const list = transactions || [];
+    const totalIncome = list.filter((t) => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+    const totalExpense = list.filter((t) => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+    const balance = totalIncome - totalExpense;
+    return {
+      totalIncome,
+      totalExpense,
+      balance,
+      count: list.length,
+    };
+  }, [transactions]);
 
   // Personal schedule lookup
   const searchedStudent = useMemo(() => {
@@ -1607,6 +1626,50 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="mt-2 text-2xl font-bold text-indigo-600">{activeStudents.length} Orang</div>
           <div className="text-[11px] text-slate-400 mt-0.5">Pool rotasi giliran kelas</div>
         </div>
+      </div>
+
+      {/* Kas Kelas (Bendahara) Summary Widget */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-4 sm:p-5 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-start sm:items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 border border-emerald-100">
+            <Wallet className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                Buku Kas Kelas (Bendahara)
+              </span>
+              <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full border border-slate-200">
+                {treasurySummary.count} Transaksi
+              </span>
+            </div>
+            <div className="flex items-baseline gap-3 mt-1 flex-wrap">
+              <span className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                Rp {treasurySummary.balance.toLocaleString('id-ID')}
+              </span>
+              <div className="flex items-center gap-3 text-xs text-slate-500">
+                <span className="text-emerald-700 font-medium">
+                  + Masuk: Rp {treasurySummary.totalIncome.toLocaleString('id-ID')}
+                </span>
+                <span>&bull;</span>
+                <span className="text-rose-700 font-medium">
+                  - Keluar: Rp {treasurySummary.totalExpense.toLocaleString('id-ID')}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {onNavigateToTreasury && (
+          <button
+            onClick={onNavigateToTreasury}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs sm:text-sm font-semibold transition cursor-pointer shadow-2xs shrink-0"
+          >
+            <Wallet className="w-4 h-4 text-emerald-400" />
+            <span>Buka Kas Kelas</span>
+            <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+          </button>
+        )}
       </div>
 
       {/* Main Weekly Schedule Grid (Grouped by Day - Senin s/d Sabtu) */}

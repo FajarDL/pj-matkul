@@ -62,11 +62,17 @@ export interface SessionSchedule {
   assignedPjIds: string[]; // List of Student IDs
   originalPjIds?: string[]; // Snapshot of original generated PJ IDs
   isManuallyEdited?: boolean; // Flag if manually swapped or replaced
+  swapInfo?: {
+    partnerSessionId?: string;
+    originalStudentId?: string;
+    replacementStudentId?: string;
+    note?: string;
+  };
   notes?: string;
   status: SessionStatus;
 }
 
-export type RotationMode = 'fair_random' | 'sequential_nim' | 'alphabetical';
+export type RotationMode = 'sequential_queue' | 'fair_random' | 'sequential_nim' | 'alphabetical';
 
 export interface RotationConfig {
   pjCountPerSession: number;
@@ -114,5 +120,19 @@ export interface AppState {
   students: Student[];
   sessions: SessionSchedule[];
   materials?: CourseMaterial[];
+  transactions?: CashTransaction[];
   activeCourseId: string | null;
+}
+
+export type TransactionType = 'income' | 'expense';
+
+export interface CashTransaction {
+  id: string;
+  type: TransactionType;
+  amount: number;
+  category: string;
+  description: string;
+  date: string; // YYYY-MM-DD
+  recordedBy?: string;
+  createdAt: string;
 }
