@@ -161,7 +161,7 @@ export const CourseManager: React.FC<CourseManagerProps> = ({
 
     const confirmMsg = nextPracticum
       ? `Jadikan "${target.name}" sebagai Mata Kuliah Praktikum?\n\nSesi praktikum tidak memerlukan penanggung jawab (PJ) dan rotasi PJ yang ada akan dikosongkan.`
-      : `Ubah "${target.name}" menjadi Mata Kuliah Teori Biasa?\n\nAnda dapat mengacak rotasi PJ untuk mata kuliah ini.`;
+      : `Ubah "${target.name}" menjadi Mata Kuliah Teori Biasa?\n\nAnda dapat menerapkan rotasi PJ untuk mata kuliah ini.`;
 
     if (confirm(confirmMsg)) {
       const updatedCourses = courses.map((c) =>

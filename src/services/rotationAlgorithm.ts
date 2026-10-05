@@ -149,28 +149,25 @@ export function generateRotationSchedule(
     return [];
   }
 
-  // Calculate dates based on startDate and intervalDays
-  const startDateObj = config.startDate ? new Date(config.startDate) : new Date();
-
-  // Track duty counts and last assigned session index for fair load-balanced rotation
-  const dutyCountMap = new Map<string, number>();
-  const lastAssignedIndexMap = new Map<string, number>();
-  const courseHistoryMap = new Map<string, Map<string, number>>();
-
-  activeStudents.forEach((s) => {
-    dutyCountMap.set(s.id, 0);
-    courseHistoryMap.set(s.id, new Map());
+  // Sort students strictly by NIM / attendance order
+  const sortedStudents = [...activeStudents].sort((a, b) => {
+    if (a.nim && b.nim) {
+      return a.nim.localeCompare(b.nim, undefined, { numeric: true });
+    }
+    return a.name.localeCompare(b.name);
   });
+
+  const startDateObj = config.startDate ? new Date(config.startDate) : new Date();
+  const count = Math.max(1, config.pjCountPerSession);
+  let studentPointer = 0;
 
   const newSessions: SessionSchedule[] = [];
 
   for (let sNum = 1; sNum <= totalSessions; sNum++) {
-    // Calculate session date
     const sessionDate = new Date(startDateObj);
     sessionDate.setDate(startDateObj.getDate() + (sNum - 1) * (config.intervalDays || 7));
     const dateStr = sessionDate.toISOString().split('T')[0];
 
-    // Check if session already had custom topic or notes
     const existing = existingSessions.find((s) => s.sessionNumber === sNum && s.courseId === courseId);
     let defaultTopic = `Pertemuan ${sNum}`;
     if (sNum === 8) defaultTopic = 'Ujian Tengah Semester (UTS)';
@@ -180,37 +177,14 @@ export function generateRotationSchedule(
     const notes = existing?.notes || '';
     const status = existing?.status || 'upcoming';
 
-    // Assign PJs for this session
     const assignedIds: string[] = [];
-    const count = Math.max(1, config.pjCountPerSession);
-
-    // If session is marked as excluded or is a practicum (no PJ required)
     const isExcluded = isPracticum || config.excludeSessionNumbers?.includes(sNum);
 
     if (!isExcluded) {
       for (let p = 0; p < count; p++) {
-        const candidate = pickFairestCandidateStudent(
-          activeStudents,
-          assignedIds,
-          new Set(),
-          dutyCountMap,
-          lastAssignedIndexMap,
-          courseHistoryMap,
-          sNum,
-          courseId,
-          config.mode === 'fair_random',
-          config.mode
-        );
-
-        if (candidate) {
-          assignedIds.push(candidate.id);
-          dutyCountMap.set(candidate.id, (dutyCountMap.get(candidate.id) || 0) + 1);
-          lastAssignedIndexMap.set(candidate.id, sNum);
-
-          const cMap = courseHistoryMap.get(candidate.id) || new Map();
-          cMap.set(courseId, (cMap.get(courseId) || 0) + 1);
-          courseHistoryMap.set(candidate.id, cMap);
-        }
+        const student = sortedStudents[studentPointer % sortedStudents.length];
+        assignedIds.push(student.id);
+        studentPointer++;
       }
     }
 
@@ -347,20 +321,18 @@ export function generateGlobalRotationSchedule(
     return timeA.localeCompare(timeB);
   });
 
-  // Track duty counts, last assigned session index, and course histories across all sessions
-  const dutyCountMap = new Map<string, number>();
-  const lastAssignedIndexMap = new Map<string, number>();
-  const courseHistoryMap = new Map<string, Map<string, number>>();
-  const weekAssignments = new Map<number, Set<string>>();
-
-  activeStudents.forEach((s) => {
-    dutyCountMap.set(s.id, 0);
-    courseHistoryMap.set(s.id, new Map());
+  // Sort students strictly by NIM / attendance order
+  const sortedStudents = [...activeStudents].sort((a, b) => {
+    if (a.nim && b.nim) {
+      return a.nim.localeCompare(b.nim, undefined, { numeric: true });
+    }
+    return a.name.localeCompare(b.name);
   });
 
   const count = Math.max(1, config.pjCountPerSession);
+  let studentPointer = 0;
 
-  const updatedSessions: SessionSchedule[] = allSessions.map((session, sessionIdx) => {
+  const updatedSessions: SessionSchedule[] = allSessions.map((session) => {
     const course = courseMap.get(session.courseId);
     const isPracticum = isPracticumCourse(course);
     const isExcluded = isPracticum || config.excludeSessionNumbers?.includes(session.sessionNumber);
@@ -370,37 +342,11 @@ export function generateGlobalRotationSchedule(
       return { ...session, assignedPjIds: [] };
     }
 
-    if (!weekAssignments.has(session.sessionNumber)) {
-      weekAssignments.set(session.sessionNumber, new Set<string>());
-    }
-    const assignedThisWeek = weekAssignments.get(session.sessionNumber)!;
-
     const assignedIds: string[] = [];
     for (let p = 0; p < count; p++) {
-      const candidate = pickFairestCandidateStudent(
-        activeStudents,
-        assignedIds,
-        assignedThisWeek,
-        dutyCountMap,
-        lastAssignedIndexMap,
-        courseHistoryMap,
-        sessionIdx,
-        session.courseId,
-        config.mode === 'fair_random',
-        config.mode
-      );
-
-      if (candidate) {
-        assignedIds.push(candidate.id);
-        assignedThisWeek.add(candidate.id);
-
-        dutyCountMap.set(candidate.id, (dutyCountMap.get(candidate.id) || 0) + 1);
-        lastAssignedIndexMap.set(candidate.id, sessionIdx);
-
-        const cMap = courseHistoryMap.get(candidate.id) || new Map();
-        cMap.set(session.courseId, (cMap.get(session.courseId) || 0) + 1);
-        courseHistoryMap.set(candidate.id, cMap);
-      }
+      const student = sortedStudents[studentPointer % sortedStudents.length];
+      assignedIds.push(student.id);
+      studentPointer++;
     }
 
     return {
@@ -467,6 +413,160 @@ export function revertSessionToOriginal(
     }
     return session;
   });
+}
+
+export interface RebalanceResult {
+  updatedSessions: SessionSchedule[];
+  message: string;
+  swappedFutureSession?: SessionSchedule;
+  exemptedStudent?: Student;
+}
+
+/**
+ * Intelligently rebalances duty schedules when a student is assigned or replaced:
+ * 1. Replaces the student in the current session.
+ * 2. If the new student (A) has an upcoming duty session in the future, automatically
+ *    transfers the nearest upcoming slot to the replaced student (B), freeing student A
+ *    from next week's duty!
+ * 3. Obligation Cap & Immunity: If student A has completed/undertaken duties >= fair quota
+ *    (e.g., covered 5 times), student A is granted 'Exempt/Lunas' status and freed from
+ *    any remaining future sessions, which are reallocated to students with the fewest duties.
+ */
+export function smartRebalanceOnPjReplacement(
+  sessions: SessionSchedule[],
+  currentSessionId: string,
+  newStudentId: string,
+  replacedStudentId: string | undefined,
+  allActiveStudents: Student[],
+  courses: Course[]
+): RebalanceResult {
+  const courseMap = new Map(courses.map((c) => [c.id, c]));
+  const studentMap = new Map(allActiveStudents.map((s) => [s.id, s]));
+  const curSession = sessions.find((s) => s.id === currentSessionId);
+  if (!curSession) {
+    return { updatedSessions: sessions, message: 'Sesi tidak ditemukan' };
+  }
+
+  // Deep copy sessions
+  const updatedSessions: SessionSchedule[] = sessions.map((s) => ({
+    ...s,
+    assignedPjIds: [...s.assignedPjIds],
+    originalPjIds: s.originalPjIds ? [...s.originalPjIds] : [...s.assignedPjIds],
+  }));
+
+  const targetCurrent = updatedSessions.find((s) => s.id === currentSessionId)!;
+
+  // Update current session PJ assignments
+  if (replacedStudentId && targetCurrent.assignedPjIds.includes(replacedStudentId)) {
+    targetCurrent.assignedPjIds = targetCurrent.assignedPjIds.map((id) =>
+      id === replacedStudentId ? newStudentId : id
+    );
+  } else if (!targetCurrent.assignedPjIds.includes(newStudentId)) {
+    targetCurrent.assignedPjIds.push(newStudentId);
+  }
+  targetCurrent.isManuallyEdited = true;
+
+  // Chronologically sort all sessions to find exact timeline
+  const chronoSessions = [...updatedSessions].sort((a, b) => {
+    if (a.sessionNumber !== b.sessionNumber) {
+      return a.sessionNumber - b.sessionNumber;
+    }
+    const cA = courseMap.get(a.courseId);
+    const cB = courseMap.get(b.courseId);
+    const dayA = getDayOrder(cA?.day || '');
+    const dayB = getDayOrder(cB?.day || '');
+    if (dayA !== dayB) return dayA - dayB;
+    return (cA?.startTime || '').localeCompare(cB?.startTime || '');
+  });
+
+  const currentChronoIdx = chronoSessions.findIndex((s) => s.id === currentSessionId);
+
+  // Find future sessions where newStudentId is already assigned
+  const futureSessionsOfNewStudent = chronoSessions.filter(
+    (s, idx) => idx > currentChronoIdx && s.assignedPjIds.includes(newStudentId)
+  );
+
+  let swappedFutureSession: SessionSchedule | undefined;
+
+  // 1. Mutual Swap with replacedStudentId (if exists and newStudent has a future turn)
+  if (replacedStudentId && futureSessionsOfNewStudent.length > 0) {
+    const nearestFuture = futureSessionsOfNewStudent[0];
+    nearestFuture.assignedPjIds = nearestFuture.assignedPjIds.map((id) =>
+      id === newStudentId ? replacedStudentId : id
+    );
+    nearestFuture.isManuallyEdited = true;
+    swappedFutureSession = nearestFuture;
+    futureSessionsOfNewStudent.shift(); // removed from remaining future list
+  }
+
+  // 2. Obligation Cap & Duty Exemption (Lunas Kewajiban)
+  // Calculate fair quota: total active students and total duties
+  const totalPjSlots = updatedSessions.reduce((acc, s) => {
+    const c = courseMap.get(s.courseId);
+    if (isPracticumCourse(c)) return acc;
+    return acc + s.assignedPjIds.length;
+  }, 0);
+  const fairQuota = allActiveStudents.length > 0
+    ? Math.ceil(totalPjSlots / allActiveStudents.length)
+    : 1;
+
+  // Count newStudent's total duties in updatedSessions
+  const totalDutiesNewStudent = updatedSessions.reduce((acc, s) => {
+    return acc + (s.assignedPjIds.includes(newStudentId) ? 1 : 0);
+  }, 0);
+
+  let exempted = false;
+  // If newStudent has reached or exceeded fairQuota, free them from remaining future sessions
+  if (totalDutiesNewStudent >= fairQuota && futureSessionsOfNewStudent.length > 0) {
+    exempted = true;
+
+    // Function to recalculate duty count of a student
+    const getDutyCount = (stId: string) =>
+      updatedSessions.reduce((acc, s) => acc + (s.assignedPjIds.includes(stId) ? 1 : 0), 0);
+
+    futureSessionsOfNewStudent.forEach((futureSess) => {
+      // Find eligible active student with fewest duties
+      const candidates = allActiveStudents
+        .filter((st) => st.id !== newStudentId && !futureSess.assignedPjIds.includes(st.id))
+        .sort((a, b) => {
+          // Prioritize replacedStudentId if they owe duties
+          if (replacedStudentId) {
+            if (a.id === replacedStudentId && b.id !== replacedStudentId) return -1;
+            if (b.id === replacedStudentId && a.id !== replacedStudentId) return 1;
+          }
+          return getDutyCount(a.id) - getDutyCount(b.id);
+        });
+
+      if (candidates.length > 0) {
+        const replacementForFuture = candidates[0];
+        futureSess.assignedPjIds = futureSess.assignedPjIds.map((id) =>
+          id === newStudentId ? replacementForFuture.id : id
+        );
+        futureSess.isManuallyEdited = true;
+      }
+    });
+  }
+
+  // Feedback message construction
+  const studentA = studentMap.get(newStudentId);
+  const studentB = replacedStudentId ? studentMap.get(replacedStudentId) : null;
+  const currentCourse = courseMap.get(curSession.courseId);
+
+  let message = `PJ ${currentCourse?.name || 'sesi'} diganti ke ${studentA?.name || ''}.`;
+  if (swappedFutureSession && studentB) {
+    const swappedCourse = courseMap.get(swappedFutureSession.courseId);
+    message += ` Jadwal ${studentA?.name} di M-${swappedFutureSession.sessionNumber} (${swappedCourse?.name || ''}) dialihkan ke ${studentB.name}.`;
+  }
+  if (exempted) {
+    message += ` ${studentA?.name} telah lunas kewajiban dan dibebaskan dari jadwal berikutnya!`;
+  }
+
+  return {
+    updatedSessions,
+    message,
+    swappedFutureSession,
+    exemptedStudent: exempted ? studentA : undefined,
+  };
 }
 
 /**

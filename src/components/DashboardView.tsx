@@ -7,7 +7,8 @@ import {
   isPracticumCourse,
   swapPjBetweenSessions,
   revertSessionToOriginal,
-  pickFairestCandidateStudent
+  pickFairestCandidateStudent,
+  smartRebalanceOnPjReplacement
 } from '../services/rotationAlgorithm';
 import { 
   Calendar, 
@@ -18,7 +19,6 @@ import {
   Share2, 
   ArrowRight, 
   Search, 
-  Shuffle, 
   ChevronLeft, 
   ChevronRight, 
   BookOpen, 
@@ -269,6 +269,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return map;
   }, [sessions]);
 
+  // Semester fair quota (average duties per active student)
+  const fairQuota = useMemo(() => {
+    const totalPjSlots = sessions.reduce((acc, s) => {
+      const c = courseMap.get(s.courseId);
+      if (isPracticumCourse(c)) return acc;
+      return acc + s.assignedPjIds.length;
+    }, 0);
+    return activeStudents.length > 0 ? Math.ceil(totalPjSlots / activeStudents.length) : 1;
+  }, [sessions, courseMap, activeStudents]);
+
+  // Map of student assignments in the previous week (to check rest/cooldown)
+  const studentPrevWeekAssignmentsMap = useMemo(() => {
+    const map = new Map<string, number>();
+    if (selectedWeek <= 1) return map;
+    const prevWeekSessions = sessions.filter((s) => s.sessionNumber === selectedWeek - 1);
+    prevWeekSessions.forEach((s) => {
+      s.assignedPjIds.forEach((id) => {
+        map.set(id, (map.get(id) || 0) + 1);
+      });
+    });
+    return map;
+  }, [sessions, selectedWeek]);
+
   // Map of student assignments in this specific selected week
   const studentWeekAssignmentsMap = useMemo(() => {
     const map = new Map<string, { courseName: string; day: string; sessionNumber: number }[]>();
@@ -447,43 +470,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const handleAssignOrReplaceStudent = (newStudentId: string) => {
     if (!activeSessionForSwap || !onUpdateSessions) return;
     const previousSessions = [...sessions];
-    const originalPjIds =
-      activeSessionForSwap.originalPjIds !== undefined
-        ? activeSessionForSwap.originalPjIds
-        : [...activeSessionForSwap.assignedPjIds];
 
-    let nextIds = [...activeSessionForSwap.assignedPjIds];
-
-    if (selectedStudentToReplace && nextIds.includes(selectedStudentToReplace)) {
-      // Replace
-      nextIds = nextIds.map((id) => (id === selectedStudentToReplace ? newStudentId : id));
-    } else {
-      // Add if not already assigned
-      if (!nextIds.includes(newStudentId)) {
-        nextIds.push(newStudentId);
-      }
-    }
-
-    const updatedSession: SessionSchedule = {
-      ...activeSessionForSwap,
-      originalPjIds,
-      assignedPjIds: nextIds,
-      isManuallyEdited: true,
-    };
-
-    const updated = sessions.map((s) =>
-      s.id === activeSessionForSwap.id ? updatedSession : s
+    const { updatedSessions, message } = smartRebalanceOnPjReplacement(
+      sessions,
+      activeSessionForSwap.id,
+      newStudentId,
+      selectedStudentToReplace || undefined,
+      activeStudents,
+      courses
     );
-    onUpdateSessions(updated);
-    setActiveSessionForSwap(updatedSession);
+
+    onUpdateSessions(updatedSessions);
+    const updatedTargetSession = updatedSessions.find((s) => s.id === activeSessionForSwap.id);
+    if (updatedTargetSession) {
+      setActiveSessionForSwap(updatedTargetSession);
+    }
     setSelectedStudentToReplace('');
 
-    const newStudent = studentMap.get(newStudentId);
-    const c = activeCourseForSwap;
-    triggerUndoToast(
-      `PJ ${c?.name || 'sesi'} diganti ke ${newStudent?.name || ''}`,
-      previousSessions
-    );
+    triggerUndoToast(message, previousSessions);
   };
 
   const handleExecuteSwap = () => {
@@ -796,15 +800,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         return assignments.length === 0;
       })
       .sort((a, b) => {
-        // Sort students: those who haven't worked this week first, then by least duties
+        const aCount = studentDutyCountMap.get(a.id) || 0;
+        const bCount = studentDutyCountMap.get(b.id) || 0;
+        const aExempt = aCount >= fairQuota;
+        const bExempt = bCount >= fairQuota;
+
+        // 1. Mahasiswa lunas kewajiban ditaruh di urutan paling bawah
+        if (aExempt !== bExempt) {
+          return aExempt ? 1 : -1;
+        }
+
+        // 2. Mahasiswa yang belum bertugas minggu ini diprioritaskan
         const aAssignedThisWeek = (studentWeekAssignmentsMap.get(a.id) || []).length;
         const bAssignedThisWeek = (studentWeekAssignmentsMap.get(b.id) || []).length;
         if (aAssignedThisWeek !== bAssignedThisWeek) {
           return aAssignedThisWeek - bAssignedThisWeek;
         }
-        const aCount = studentDutyCountMap.get(a.id) || 0;
-        const bCount = studentDutyCountMap.get(b.id) || 0;
+
+        // 3. Beban tugas terendah diprioritaskan lebih atas
         if (aCount !== bCount) return aCount - bCount;
+
+        // 4. Mahasiswa yang sedang cooldown (bertugas di minggu kemarin) ditaruh setelah yang istirahat lebih lama
+        const aAssignedPrevWeek = studentPrevWeekAssignmentsMap.get(a.id) || 0;
+        const bAssignedPrevWeek = studentPrevWeekAssignmentsMap.get(b.id) || 0;
+        if (aAssignedPrevWeek !== bAssignedPrevWeek) {
+          return aAssignedPrevWeek - bAssignedPrevWeek;
+        }
+
         return a.name.localeCompare(b.name);
       });
 
@@ -1035,10 +1057,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         type="button"
                         onClick={handleAutoPickFairestStudent}
                         className="inline-flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white rounded-lg text-[11px] font-bold shadow-2xs transition cursor-pointer"
-                        title="Pilih mahasiswa secara acak yang paling adil (beban tugas terendah, bebas minggu ini, istirahat terlama)"
+                        title="Pilih mahasiswa secara otomatis yang paling adil (beban tugas terendah, bebas minggu ini, istirahat terlama)"
                       >
                         <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                        <span>🎲 Acak yang Paling Adil</span>
+                        <span>🎯 Pilih yang Paling Adil</span>
                       </button>
 
                       {/* Filter checkbox: Free students this week */}
@@ -1075,6 +1097,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         const weekAssignments = studentWeekAssignmentsMap.get(st.id) || [];
                         const isAssignedOtherDaysThisWeek = weekAssignments.length > 0;
                         const dutyCount = studentDutyCountMap.get(st.id) || 0;
+                        const isExempt = dutyCount >= fairQuota;
+                        const wasAssignedPrevWeek = (studentPrevWeekAssignmentsMap.get(st.id) || 0) > 0;
+                        const isLowestDuty = !isExempt && dutyCount === minDutyAmongFree;
 
                         return (
                           <div
@@ -1095,9 +1120,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                       ★ PJ Asli Rotasi
                                     </span>
                                   )}
-                                  {!isAssignedOtherDaysThisWeek && dutyCount === minDutyAmongFree && (
-                                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100/90 border border-emerald-300 px-1.5 py-0.2 rounded">
-                                      ✨ Rekomendasi Paling Adil
+                                  {isExempt && (
+                                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100/90 border border-emerald-300 px-1.5 py-0.2 rounded" title="Sudah melunasi kuota tugas semester dan bebas dari jadwal berikutnya">
+                                      🛡️ Bebas Tugas (Lunas: {dutyCount} sesi)
+                                    </span>
+                                  )}
+                                  {!isExempt && isLowestDuty && !isAssignedOtherDaysThisWeek && (
+                                    <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.2 rounded" title="Beban tugas paling sedikit di kelas">
+                                      ⚠️ Prioritas Tugas ({dutyCount} tugas)
+                                    </span>
+                                  )}
+                                  {wasAssignedPrevWeek && (
+                                    <span className="text-[10px] font-medium text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded" title={`Bertugas di Minggu ke-${selectedWeek - 1}`}>
+                                      ⏳ Cooldown (M-{selectedWeek - 1})
                                     </span>
                                   )}
                                 </div>
@@ -1128,9 +1163,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => handleAssignOrReplaceStudent(st.id)}
-                                  className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer flex items-center gap-1"
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer flex items-center gap-1.5 ${
+                                    isExempt
+                                      ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+                                      : selectedStudentToReplace
+                                      ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                                      : 'bg-slate-900 hover:bg-slate-800 text-white'
+                                  }`}
                                 >
-                                  <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+                                  <UserCheck className={`w-3.5 h-3.5 ${isExempt ? 'text-slate-500' : 'text-emerald-400'}`} />
                                   <span>
                                     {selectedStudentToReplace ? 'Gantikan' : '+ Jadikan PJ'}
                                   </span>
@@ -1390,8 +1431,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 onClick={onOpenGlobalRotationModal}
                 className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-4 py-2.5 rounded-xl text-xs sm:text-sm transition cursor-pointer shadow-xs"
               >
-                <Shuffle className="w-4 h-4" />
-                <span>Acak Rotasi Semua Matkul</span>
+                <RotateCcw className="w-4 h-4" />
+                <span>Rotasi Sesuai Urutan Absen</span>
               </button>
             )}
 
@@ -1524,8 +1565,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               onClick={onOpenGlobalRotationModal}
               className="inline-flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs px-3.5 py-1.5 rounded-lg shrink-0 transition cursor-pointer"
             >
-              <Shuffle className="w-3.5 h-3.5" />
-              <span>Acak Rotasi Otomatis</span>
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Terapkan Rotasi Sesuai Urutan Absen</span>
             </button>
           )}
         </div>
@@ -1908,7 +1949,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
             ) : (
               <p className="text-xs text-slate-500 italic py-2">
-                Mahasiswa ini belum memiliki penugasan PJ. Klik tombol "Acak Rotasi Semua Matkul" di atas untuk membagikan tugas.
+                Mahasiswa ini belum memiliki penugasan PJ. Klik tombol "Rotasi Sesuai Urutan Absen" di atas untuk membagikan tugas.
               </p>
             )}
           </div>

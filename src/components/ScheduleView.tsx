@@ -9,7 +9,7 @@ import {
   isPracticumCourse
 } from '../services/rotationAlgorithm';
 import { 
-  Shuffle, 
+  RotateCcw,
   ArrowLeftRight, 
   Printer, 
   Download, 
@@ -401,17 +401,17 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
               <button
                 onClick={() => setIsGlobalModalOpen(true)}
                 className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs sm:text-sm px-4 py-2.5 rounded-xl shadow-xs transition cursor-pointer"
-                title="Acak rotasi serentak untuk semua mata kuliah agar giliran adil dan tidak bentrok"
+                title="Terapkan rotasi serentak untuk semua mata kuliah sesuai urutan daftar absen / NIM"
               >
-                <Shuffle className="w-4 h-4" />
-                <span>Rotasi Semua Matkul (Global)</span>
+                <RotateCcw className="w-4 h-4" />
+                <span>Rotasi Sesuai Urutan Absen (Global)</span>
               </button>
 
               {activeCourse && (
                 <button
                   onClick={() => setIsSingleCourseModalOpen(true)}
                   className="inline-flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs sm:text-sm px-3.5 py-2.5 rounded-xl shadow-xs transition cursor-pointer"
-                  title="Hanya acak rotasi untuk mata kuliah ini saja"
+                  title="Terapkan rotasi untuk mata kuliah ini saja sesuai urutan daftar absen / NIM"
                 >
                   <Sparkles className="w-4 h-4" />
                   <span>Rotasi Matkul Ini Saja</span>
@@ -430,7 +430,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
             <button
               onClick={onRequestLogin}
               className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-xs px-3 py-2 rounded-xl border border-slate-200 transition"
-              title="Masukkan kunci akses untuk mengacak atau menukar giliran"
+              title="Masukkan kunci akses untuk mengatur rotasi atau menukar giliran"
             >
               <Lock className="w-3.5 h-3.5 text-slate-500" />
               <span>Buka Kunci untuk Edit</span>
@@ -683,7 +683,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2">
-                <Shuffle className="w-5 h-5 text-indigo-600" />
+                <RotateCcw className="w-5 h-5 text-indigo-600" />
                 <h3 className="text-base font-bold text-slate-900">
                   Rotasi Global Semua Mata Kuliah
                 </h3>
@@ -723,62 +723,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Metode Pengacakan & Urutan
-                </label>
-                <div className="space-y-2">
-                  <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="globalMode"
-                      value="fair_random"
-                      checked={rotationConfig.mode === 'fair_random'}
-                      onChange={() => setRotationConfig({ ...rotationConfig, mode: 'fair_random' })}
-                      className="mt-0.5 text-slate-900 focus:ring-slate-900"
-                    />
-                    <div>
-                      <div className="text-xs font-bold text-slate-900">Acak Adil & Merata (Fair Random)</div>
-                      <div className="text-[11px] text-slate-500">
-                        Urutan diacak secara merata ke seluruh jadwal mata kuliah.
-                      </div>
-                    </div>
-                  </label>
-
-                  <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="globalMode"
-                      value="sequential_nim"
-                      checked={rotationConfig.mode === 'sequential_nim'}
-                      onChange={() => setRotationConfig({ ...rotationConfig, mode: 'sequential_nim' })}
-                      className="mt-0.5 text-slate-900 focus:ring-slate-900"
-                    />
-                    <div>
-                      <div className="text-xs font-bold text-slate-900">Berurutan Sesuai Urutan NIM</div>
-                      <div className="text-[11px] text-slate-500">
-                        Mahasiswa bergilir sesuai urutan nomor induk mahasiswa terkecil.
-                      </div>
-                    </div>
-                  </label>
-
-                  <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="globalMode"
-                      value="alphabetical"
-                      checked={rotationConfig.mode === 'alphabetical'}
-                      onChange={() => setRotationConfig({ ...rotationConfig, mode: 'alphabetical' })}
-                      className="mt-0.5 text-slate-900 focus:ring-slate-900"
-                    />
-                    <div>
-                      <div className="text-xs font-bold text-slate-900">Berurutan Berdasarkan Abjad (A-Z)</div>
-                      <div className="text-[11px] text-slate-500">
-                        Mahasiswa bergilir urut dari nama alfabetis A ke Z.
-                      </div>
-                    </div>
-                  </label>
+              <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3.5 space-y-1.5">
+                <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
+                  <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
+                  <span>Rotasi Berurutan Sesuai Daftar Absen / NIM</span>
                 </div>
+                <p className="text-[11px] text-indigo-800 leading-relaxed">
+                  Seluruh mahasiswa bergilir secara adil & berurutan dari nomor urut awal hingga akhir. Mahasiswa nomor urut awal dijamin tidak akan bertugas lagi sebelum seluruh anggota kelas menyelesaikan giliran tugas mereka.
+                </p>
               </div>
 
               <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
@@ -793,7 +745,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                   type="submit"
                   className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs transition cursor-pointer"
                 >
-                  Terapkan Rotasi Global Sekarang
+                  Terapkan Rotasi Sesuai Urutan Absen
                 </button>
               </div>
             </form>
@@ -837,19 +789,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Metode Pengacakan
-                </label>
-                <select
-                  value={rotationConfig.mode}
-                  onChange={(e) => setRotationConfig({ ...rotationConfig, mode: e.target.value as any })}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                >
-                  <option value="fair_random">Acak Adil (Fair Random)</option>
-                  <option value="sequential_nim">Urutan NIM</option>
-                  <option value="alphabetical">Urutan Nama A-Z</option>
-                </select>
+              <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3.5 space-y-1.5">
+                <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
+                  <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
+                  <span>Rotasi Berurutan Sesuai Daftar Absen / NIM</span>
+                </div>
+                <p className="text-[11px] text-indigo-800 leading-relaxed">
+                  Mahasiswa bergilir secara berurutan dari nomor urut awal hingga akhir untuk seluruh sesi mata kuliah ini.
+                </p>
               </div>
 
               <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
@@ -864,7 +811,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                   type="submit"
                   className="px-4 py-2 text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white rounded-lg cursor-pointer"
                 >
-                  Acak Matkul Ini
+                  Terapkan Rotasi Sesuai Urutan Absen
                 </button>
               </div>
             </form>
