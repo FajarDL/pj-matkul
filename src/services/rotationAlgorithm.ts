@@ -1,4 +1,4 @@
-import type { Student, SessionSchedule, RotationConfig, Course, RotationMode } from '../types';
+import type { Student, SessionSchedule, RotationConfig, Course, RotationMode, SessionStatus } from '../types';
 
 export interface StudentPjStat {
   student: Student;
@@ -251,6 +251,107 @@ export function calculateStudentStats(
       sessionNumbers: studentSessions.map((s) => s.sessionNumber).sort((a, b) => a - b),
     };
   });
+}
+
+export interface StudentCourseBreakdown {
+  courseId: string;
+  courseName: string;
+  courseCode: string;
+  courseColor: string;
+  count: number;
+  sessions: {
+    sessionId: string;
+    sessionNumber: number;
+    day: string;
+    startTime: string;
+    endTime: string;
+    room: string;
+    lecturer: string;
+    status: SessionStatus;
+  }[];
+}
+
+export interface StudentDutyDetail {
+  student: Student;
+  totalAssigned: number;
+  completedCount: number;
+  upcomingCount: number;
+  courses: StudentCourseBreakdown[];
+}
+
+/**
+ * Calculates comprehensive PJ duty breakdowns for each student across all courses and sessions
+ */
+export function calculateStudentDutyDetails(
+  students: Student[],
+  sessions: SessionSchedule[],
+  courses: Course[]
+): Map<string, StudentDutyDetail> {
+  const courseMap = new Map<string, Course>();
+  courses.forEach((c) => courseMap.set(c.id, c));
+
+  const map = new Map<string, StudentDutyDetail>();
+
+  students.forEach((student) => {
+    const studentSessions = sessions.filter((s) => s.assignedPjIds.includes(student.id));
+    const completedCount = studentSessions.filter((s) => s.status === 'completed').length;
+    const upcomingCount = studentSessions.filter((s) => s.status === 'upcoming' || s.status === 'ongoing').length;
+
+    // Group assigned sessions by course
+    const courseGroupMap = new Map<string, StudentCourseBreakdown>();
+
+    studentSessions.forEach((s) => {
+      const course = courseMap.get(s.courseId);
+      const courseId = s.courseId;
+      const courseName = course?.name || 'Mata Kuliah';
+      const courseCode = course?.code || '-';
+      const courseColor = course?.color || '#4f46e5';
+
+      let group = courseGroupMap.get(courseId);
+      if (!group) {
+        group = {
+          courseId,
+          courseName,
+          courseCode,
+          courseColor,
+          count: 0,
+          sessions: [],
+        };
+        courseGroupMap.set(courseId, group);
+      }
+
+      group.count++;
+      group.sessions.push({
+        sessionId: s.id,
+        sessionNumber: s.sessionNumber,
+        day: course?.day || '-',
+        startTime: course?.startTime || '',
+        endTime: course?.endTime || '',
+        room: course?.room || '-',
+        lecturer: course?.lecturer || '-',
+        status: s.status,
+      });
+    });
+
+    // Sort sessions in each course chronologically
+    const courseBreakdowns: StudentCourseBreakdown[] = Array.from(courseGroupMap.values()).map((cg) => ({
+      ...cg,
+      sessions: [...cg.sessions].sort((a, b) => a.sessionNumber - b.sessionNumber),
+    }));
+
+    // Sort courses by duty count descending, then by name
+    courseBreakdowns.sort((a, b) => b.count - a.count || a.courseName.localeCompare(b.courseName));
+
+    map.set(student.id, {
+      student,
+      totalAssigned: studentSessions.length,
+      completedCount,
+      upcomingCount,
+      courses: courseBreakdowns,
+    });
+  });
+
+  return map;
 }
 
 /**

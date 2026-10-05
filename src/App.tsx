@@ -439,11 +439,16 @@ export function App() {
           <StudentManager
             students={data.students}
             sessions={data.sessions}
+            courses={data.courses}
             activeCourseId={activeCourse?.id || null}
             userRole={authSession.role}
             onUpdateStudents={handleUpdateStudents}
             onDeleteAllStudents={() => handleDeleteAllStudents()}
             onRequestLogin={() => setIsLoginModalOpen(true)}
+            onNavigateToSchedule={(courseId) => {
+              if (courseId) handleSelectCourse(courseId);
+              setActiveTab('schedule');
+            }}
           />
         )}
 
