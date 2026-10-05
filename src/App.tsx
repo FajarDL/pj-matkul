@@ -14,6 +14,7 @@ import { PrintScheduleView } from './components/PrintScheduleView';
 import { LoginModal } from './components/LoginModal';
 import { SecuritySettingsModal } from './components/SecuritySettingsModal';
 import { checkCourseDuplicate } from './services/scheduleValidation';
+import { autoPopulateSequentialSchedule, isPracticumCourse } from './services/rotationAlgorithm';
 import { CheckCircle2 } from 'lucide-react';
 
 export function App() {
@@ -26,6 +27,19 @@ export function App() {
   const [selectedMaterialCourseId, setSelectedMaterialCourseId] = useState<string | null>(null);
   const [selectedMaterialSessionNumber, setSelectedMaterialSessionNumber] = useState<number | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Auto-schedule on initial load if active students and courses exist but sessions are unassigned
+  useEffect(() => {
+    const hasActiveStudents = data.students.some((s) => s.isActive);
+    const hasUnassignedSessions = data.sessions.some(
+      (s) => s.assignedPjIds.length === 0 && !isPracticumCourse(data.courses.find((c) => c.id === s.courseId))
+    );
+
+    if (hasActiveStudents && data.courses.length > 0 && hasUnassignedSessions) {
+      const populated = autoPopulateSequentialSchedule(data.courses, data.students, data.sessions);
+      setData((prev) => ({ ...prev, sessions: populated }));
+    }
+  }, []);
 
   // Handle URL reset flags (e.g. ?reset=true or ?reset=auth)
   useEffect(() => {
@@ -104,10 +118,16 @@ export function App() {
       });
     }
 
+    const updatedCourses = [...data.courses, newCourse];
+    let allUpdatedSessions = [...data.sessions, ...newSessions];
+    if (data.students.some((s) => s.isActive)) {
+      allUpdatedSessions = autoPopulateSequentialSchedule(updatedCourses, data.students, allUpdatedSessions);
+    }
+
     setData((prev) => ({
       ...prev,
-      courses: [...prev.courses, newCourse],
-      sessions: [...prev.sessions, ...newSessions],
+      courses: updatedCourses,
+      sessions: allUpdatedSessions,
       activeCourseId: newCourse.id,
     }));
 
@@ -188,10 +208,16 @@ export function App() {
       }
     });
 
+    const updatedCourses = [...data.courses, ...createdCourses];
+    let allUpdatedSessions = [...data.sessions, ...allSessions];
+    if (data.students.some((s) => s.isActive)) {
+      allUpdatedSessions = autoPopulateSequentialSchedule(updatedCourses, data.students, allUpdatedSessions);
+    }
+
     setData((prev) => ({
       ...prev,
-      courses: [...prev.courses, ...createdCourses],
-      sessions: [...prev.sessions, ...allSessions],
+      courses: updatedCourses,
+      sessions: allUpdatedSessions,
       activeCourseId: prev.activeCourseId || createdCourses[0]?.id || null,
     }));
 
@@ -290,7 +316,17 @@ export function App() {
 
   // Handlers for Students
   const handleUpdateStudents = (newStudents: Student[]) => {
-    setData((prev) => ({ ...prev, students: newStudents }));
+    setData((prev) => {
+      let updatedSessions = prev.sessions;
+      const hasActive = newStudents.some((s) => s.isActive);
+      const hasEmpty = prev.sessions.some(
+        (s) => s.assignedPjIds.length === 0 && !isPracticumCourse(prev.courses.find((c) => c.id === s.courseId))
+      );
+      if (hasActive && prev.courses.length > 0 && hasEmpty) {
+        updatedSessions = autoPopulateSequentialSchedule(prev.courses, newStudents, prev.sessions);
+      }
+      return { ...prev, students: newStudents, sessions: updatedSessions };
+    });
     showToast('Data mahasiswa berhasil diperbarui');
   };
 
@@ -321,7 +357,7 @@ export function App() {
   // Handlers for Sessions
   const handleUpdateSessions = (newSessions: SessionSchedule[]) => {
     setData((prev) => ({ ...prev, sessions: newSessions }));
-    showToast('Jadwal rotasi diperbarui');
+    showToast('Jadwal penugasan PJ diperbarui');
   };
 
   // Toggle single session status from dashboard

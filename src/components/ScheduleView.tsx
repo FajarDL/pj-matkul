@@ -1,8 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import type { Course, Student, SessionSchedule, RotationConfig, SessionStatus, UserRole, CourseMaterial } from '../types';
+import type { Course, Student, SessionSchedule, SessionStatus, UserRole, CourseMaterial } from '../types';
 import { 
-  generateRotationSchedule, 
-  generateGlobalRotationSchedule,
+  rescheduleAllSequential,
   generateWhatsAppMessage, 
   swapPjBetweenSessions,
   getDayOrder,
@@ -21,7 +20,6 @@ import {
   Info,
   Lock,
   Layers,
-  Sparkles,
   FolderOpen
 } from 'lucide-react';
 
@@ -54,20 +52,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   const [statusFilter, setStatusFilter] = useState<'all' | SessionStatus>('all');
   
   // Modals state
-  const [isGlobalModalOpen, setIsGlobalModalOpen] = useState(false);
-  const [isSingleCourseModalOpen, setIsSingleCourseModalOpen] = useState(false);
   const [isSwapModalOpen, setIsSwapModalOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<SessionSchedule | null>(null);
   const [copiedSessionId, setCopiedSessionId] = useState<string | null>(null);
-
-  // Rotation Config Form State (Defaults to strict round-robin queue)
-  const [rotationConfig, setRotationConfig] = useState<RotationConfig>({
-    pjCountPerSession: 1,
-    mode: 'sequential_queue',
-    startDate: new Date().toISOString().split('T')[0],
-    intervalDays: 7,
-    excludeSessionNumbers: [],
-  });
 
   // Swap State
   const [swapSessionAId, setSwapSessionAId] = useState<string>('');
@@ -154,9 +141,8 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
     });
   }, [displayedSessions, statusFilter, searchQuery, courseMap, students]);
 
-  // Handle Global Rotation Generation across ALL courses
-  const handleGenerateGlobalRotation = (e: React.FormEvent) => {
-    e.preventDefault();
+  // Handle Reschedule All Sequentially based on Attendance Order / NIM
+  const handleRescheduleAll = () => {
     if (!isAdmin) {
       onRequestLogin?.();
       return;
@@ -172,50 +158,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       return;
     }
 
-    const updated = generateGlobalRotationSchedule(
-      courses,
-      students,
-      rotationConfig,
-      sessions
-    );
-
-    onUpdateSessions(updated);
-    setIsGlobalModalOpen(false);
-  };
-
-  // Handle Single Course Rotation Generation
-  const handleGenerateSingleCourseRotation = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isAdmin) {
-      onRequestLogin?.();
-      return;
+    if (
+      confirm(
+        'Jadwalkan ulang seluruh sesi perkuliahan secara berurutan sesuai nomor urut absen (1 s/d N)?\n\nSeluruh penugasan akan diselaraskan kembali dari nomor absen awal, dan penyesuaian manual yang pernah dibuat akan diatur ulang.'
+      )
+    ) {
+      const updated = rescheduleAllSequential(courses, students, sessions);
+      onUpdateSessions(updated);
     }
-
-    if (!activeCourse) return;
-
-    if (isPracticumCourse(activeCourse)) {
-      alert('Mata kuliah ini adalah Praktikum (tanpa rotasi PJ). Anda dapat mengubah statusnya di menu "Mata Kuliah" jika membutuhkan PJ.');
-      return;
-    }
-
-    if (students.filter((s) => s.isActive).length === 0) {
-      alert('Tambahkan mahasiswa aktif terlebih dahulu di tab "Data Mahasiswa"!');
-      return;
-    }
-
-    const currentCourseSessions = sessions.filter((s) => s.courseId === activeCourse.id);
-    const updated = generateRotationSchedule(
-      activeCourse.id,
-      students,
-      activeCourse.totalSessions,
-      rotationConfig,
-      currentCourseSessions,
-      isPracticumCourse(activeCourse)
-    );
-
-    const otherSessions = sessions.filter((s) => s.courseId !== activeCourse.id);
-    onUpdateSessions([...otherSessions, ...updated]);
-    setIsSingleCourseModalOpen(false);
   };
 
   // Handle Swap PJ
@@ -386,24 +336,30 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
       {/* Action Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs no-print">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <span>
-              {activeCourse ? `Jadwal Rotasi: ${activeCourse.name} (${activeCourse.code})` : 'Jadwal & Rotasi Semua Mata Kuliah'}
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <span>
+                {activeCourse ? `Jadwal & Penugasan: ${activeCourse.name} (${activeCourse.code})` : 'Jadwal & Penugasan PJ Semua Mata Kuliah'}
+              </span>
+              <span className="text-xs bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded-full font-semibold border border-slate-200">
+                {displayedSessions.length} Sesi
+              </span>
+            </h2>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <Check className="w-3 h-3 text-emerald-600" />
+              <span>Terjadwal Otomatis Urutan Absen (1 s/d N)</span>
             </span>
-            <span className="text-xs bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded-full font-semibold border border-slate-200">
-              {displayedSessions.length} Sesi
-            </span>
-          </h2>
+          </div>
           <p className="text-xs text-slate-500 mt-1">
             {activeCourse 
               ? `${activeCourse.day}, ${activeCourse.startTime} - ${activeCourse.endTime} WIB | Dosen: ${activeCourse.lecturer}`
-              : 'Rotasi berkesinambungan di seluruh mata kuliah agar beban tugas terbagi secara adil.'
+              : 'Seluruh sesi perkuliahan terjadwal terurut dan seimbang berdasarkan nomor urut absen / NIM.'
             }
           </p>
           {activeCourse && isPracticumCourse(activeCourse) && (
             <div className="mt-2 inline-flex items-center gap-1.5 text-xs text-purple-800 bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200 font-medium">
               <span>🧪</span>
-              <span>Mata kuliah ini berstatus Praktikum (tanpa rotasi penugasan PJ).</span>
+              <span>Mata kuliah ini berstatus Praktikum (tanpa penugasan PJ).</span>
             </div>
           )}
         </div>
@@ -412,40 +368,30 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           {isAdmin ? (
             <>
-              {/* Prominent Global Rotation Button */}
+              {/* Single Clean Reschedule Button */}
               <button
-                onClick={() => setIsGlobalModalOpen(true)}
-                className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs sm:text-sm px-4 py-2.5 rounded-xl shadow-xs transition cursor-pointer"
-                title="Terapkan rotasi serentak untuk semua mata kuliah sesuai urutan daftar absen / NIM"
+                onClick={handleRescheduleAll}
+                className="inline-flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs sm:text-sm px-3.5 py-2.5 rounded-xl shadow-xs transition cursor-pointer"
+                title="Jadwalkan ulang seluruh sesi perkuliahan secara berurutan sesuai nomor urut absen"
               >
-                <RotateCcw className="w-4 h-4" />
-                <span>Rotasi Sesuai Urutan Absen (Global)</span>
+                <RotateCcw className="w-4 h-4 text-indigo-400" />
+                <span>Jadwalkan Ulang Sesuai Urutan Absen</span>
               </button>
-
-              {activeCourse && (
-                <button
-                  onClick={() => setIsSingleCourseModalOpen(true)}
-                  className="inline-flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs sm:text-sm px-3.5 py-2.5 rounded-xl shadow-xs transition cursor-pointer"
-                  title="Terapkan rotasi untuk mata kuliah ini saja sesuai urutan daftar absen / NIM"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  <span>Rotasi Matkul Ini Saja</span>
-                </button>
-              )}
 
               <button
                 onClick={() => setIsSwapModalOpen(true)}
                 className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold text-xs sm:text-sm px-3.5 py-2.5 rounded-xl transition cursor-pointer border border-slate-200"
+                title="Tukar atau ambil jatah PJ antar dua sesi perkuliahan"
               >
-                <ArrowLeftRight className="w-4 h-4 text-slate-600" />
-                <span>Tukar PJ (Swap)</span>
+                <ArrowLeftRight className="w-4 h-4 text-indigo-600" />
+                <span>Tukar / Ambil Jatah PJ</span>
               </button>
             </>
           ) : (
             <button
               onClick={onRequestLogin}
               className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-xs px-3 py-2 rounded-xl border border-slate-200 transition"
-              title="Masukkan kunci akses untuk mengatur rotasi atau menukar giliran"
+              title="Masukkan kunci akses untuk mengatur jadwal atau menukar giliran"
             >
               <Lock className="w-3.5 h-3.5 text-slate-500" />
               <span>Buka Kunci untuk Edit</span>
@@ -733,156 +679,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
         </div>
       </div>
 
-      {/* MODAL: Generate Global Rotation (Across ALL Courses) */}
-      {isGlobalModalOpen && isAdmin && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs no-print">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <RotateCcw className="w-5 h-5 text-indigo-600" />
-                <h3 className="text-base font-bold text-slate-900">
-                  Rotasi Global Semua Mata Kuliah
-                </h3>
-              </div>
-              <button onClick={() => setIsGlobalModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="bg-indigo-50/80 border border-indigo-200/80 p-3.5 rounded-xl text-xs text-indigo-900 space-y-1">
-              <span className="font-bold block">Prinsip Rotasi Global:</span>
-              <p className="leading-relaxed">
-                Mahasiswa akan digilir secara berkesinambungan di <strong>semua mata kuliah sekaligus</strong> (Senin s/d Jumat/Sabtu), sehingga setiap mahasiswa mendapat giliran merata tanpa bertugas ganda pada minggu yang sama.
-              </p>
-            </div>
-
-            <form onSubmit={handleGenerateGlobalRotation} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Jumlah PJ Per Sesi Pertemuan
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[1, 2, 3].map((num) => (
-                    <button
-                      type="button"
-                      key={num}
-                      onClick={() => setRotationConfig({ ...rotationConfig, pjCountPerSession: num })}
-                      className={`py-2 text-xs font-semibold rounded-lg border transition cursor-pointer ${
-                        rotationConfig.pjCountPerSession === num
-                          ? 'bg-slate-900 text-white border-slate-900'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      {num} Orang {num === 2 ? '(Pasangan)' : ''}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3.5 space-y-1.5">
-                <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
-                  <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
-                  <span>Rotasi Berurutan Sesuai Daftar Absen / NIM</span>
-                </div>
-                <p className="text-[11px] text-indigo-800 leading-relaxed">
-                  Seluruh mahasiswa bergilir secara adil & berurutan dari nomor urut awal hingga akhir. Mahasiswa nomor urut awal dijamin tidak akan bertugas lagi sebelum seluruh anggota kelas menyelesaikan giliran tugas mereka.
-                </p>
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsGlobalModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs transition cursor-pointer"
-                >
-                  Terapkan Rotasi Sesuai Urutan Absen
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: Single Course Rotation */}
-      {isSingleCourseModalOpen && isAdmin && activeCourse && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs no-print">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-base font-bold text-slate-900">
-                Rotasi Khusus Mata Kuliah: {activeCourse.name}
-              </h3>
-              <button onClick={() => setIsSingleCourseModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleGenerateSingleCourseRotation} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">
-                  Jumlah PJ Per Sesi
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[1, 2, 3].map((num) => (
-                    <button
-                      type="button"
-                      key={num}
-                      onClick={() => setRotationConfig({ ...rotationConfig, pjCountPerSession: num })}
-                      className={`py-2 text-xs font-semibold rounded-lg border transition cursor-pointer ${
-                        rotationConfig.pjCountPerSession === num
-                          ? 'bg-slate-900 text-white border-slate-900'
-                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
-                      }`}
-                    >
-                      {num} Orang
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3.5 space-y-1.5">
-                <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
-                  <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
-                  <span>Rotasi Berurutan Sesuai Daftar Absen / NIM</span>
-                </div>
-                <p className="text-[11px] text-indigo-800 leading-relaxed">
-                  Mahasiswa bergilir secara berurutan dari nomor urut awal hingga akhir untuk seluruh sesi mata kuliah ini.
-                </p>
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsSingleCourseModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white rounded-lg cursor-pointer"
-                >
-                  Terapkan Rotasi Sesuai Urutan Absen
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL: Swap PJ */}
+      {/* MODAL: Swap / Barter PJ */}
       {isSwapModalOpen && isAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs no-print">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                 <ArrowLeftRight className="w-4 h-4 text-indigo-600" />
-                <span>Tukar Jadwal Penugasan (Swap / Barter PJ)</span>
+                <span>Tukar / Ambil Jatah PJ (Barter Giliran)</span>
               </h3>
               <button onClick={() => setIsSwapModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
                 <X className="w-5 h-5" />
@@ -892,9 +696,9 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
             <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-900 flex items-start gap-2.5">
               <ArrowLeftRight className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
               <div className="space-y-0.5">
-                <span className="font-bold">Mekanisme Barter Giliran (Mutual Swap):</span>
+                <span className="font-bold">Mekanisme Barter Jatah Tugas (Mutual Swap):</span>
                 <p className="text-[11px] text-indigo-800 leading-relaxed">
-                  Jika Mahasiswa Pihak Pertama bertukar dengan Mahasiswa Pihak Kedua, maka kedua mahasiswa saling bertukar jadwal tugas secara seimbang. Jatah giliran berikutnya otomatis saling menggantikan sehingga kuota 1 rotasi tetap adil.
+                  Jika Mahasiswa Pihak Pertama bertukar dengan Mahasiswa Pihak Kedua, maka kedua mahasiswa saling bertukar jadwal tugas secara seimbang. Jatah tugas otomatis saling bertukar sehingga kuota penugasan tetap adil.
                 </p>
               </div>
             </div>

@@ -174,7 +174,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <CalendarDays className="w-4 h-4" />
-              <span>Jadwal & Rotasi</span>
+              <span>Jadwal & Penugasan PJ</span>
             </button>
 
             <button

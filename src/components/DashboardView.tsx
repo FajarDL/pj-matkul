@@ -861,7 +861,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   {activeCourseForSwap.code}
                 </span>
                 <h3 className="text-base font-bold text-slate-900 leading-snug">
-                  Tukar / Ganti Penanggung Jawab (PJ)
+                  Tukar / Ambil Jatah Penanggung Jawab (PJ)
                 </h3>
               </div>
               <p className="text-xs text-slate-600 mt-1 flex flex-wrap items-center gap-x-2.5">
@@ -892,7 +892,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               }`}
             >
               <UserCheck className="w-4 h-4 text-indigo-600" />
-              <span>Ganti / Tambah PJ</span>
+              <span>Ganti / Barter Jatah PJ</span>
             </button>
             <button
               type="button"
@@ -1054,12 +1054,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   )}
 
                   {selectedStudentToReplace && (
-                    <div className="p-2 bg-indigo-100/60 text-indigo-900 rounded-lg text-[11px] font-medium flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
-                      <span>
+                    <div className="p-2.5 bg-indigo-50 border border-indigo-200 text-indigo-900 rounded-xl text-[11px] font-medium flex items-start gap-2">
+                      <Sparkles className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                      <div className="leading-relaxed">
                         Pilih satu mahasiswa dari daftar di bawah untuk menggantikan{' '}
-                        <strong>{studentMap.get(selectedStudentToReplace)?.name}</strong>.
-                      </span>
+                        <strong>{studentMap.get(selectedStudentToReplace)?.name}</strong>. Jatah tugas terdekat milik pengganti di masa depan otomatis dibarter dan diserahkan kepada mahasiswa ini agar total beban tugas tetap seimbang.
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1825,7 +1825,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                         title="Tukar atau ganti penanggung jawab sesi ini"
                                       >
                                         <ArrowLeftRight className="w-3 h-3 text-indigo-600" />
-                                        <span>Tukar / Ganti</span>
+                                        <span>Tukar / Ambil Jatah</span>
                                       </button>
                                     </div>
                                   )}

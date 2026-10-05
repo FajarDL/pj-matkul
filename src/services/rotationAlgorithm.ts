@@ -799,13 +799,25 @@ export function smartRebalanceOnPjReplacement(
 
   let swappedFutureSession: SessionSchedule | undefined;
 
-  // 1. Mutual Swap with replacedStudentId (if exists and newStudent has a future turn)
+  // 1. Mutual Barter of Turns with replacedStudentId (Si B mengambil jatah Si A, Si A mendapatkan jatah masa depan Si B)
   if (replacedStudentId && futureSessionsOfNewStudent.length > 0) {
     const nearestFuture = futureSessionsOfNewStudent[0];
     nearestFuture.assignedPjIds = nearestFuture.assignedPjIds.map((id) =>
       id === newStudentId ? replacedStudentId : id
     );
     nearestFuture.isManuallyEdited = true;
+    nearestFuture.swapInfo = {
+      partnerSessionId: currentSessionId,
+      originalStudentId: newStudentId,
+      replacementStudentId: replacedStudentId,
+      note: `Barter jatah tugas dengan M-${curSession.sessionNumber}`,
+    };
+    targetCurrent.swapInfo = {
+      partnerSessionId: nearestFuture.id,
+      originalStudentId: replacedStudentId,
+      replacementStudentId: newStudentId,
+      note: `Barter jatah tugas dengan M-${nearestFuture.sessionNumber}`,
+    };
     swappedFutureSession = nearestFuture;
     futureSessionsOfNewStudent.shift(); // removed from remaining future list
   }
@@ -866,8 +878,11 @@ export function smartRebalanceOnPjReplacement(
   let message = `PJ ${currentCourse?.name || 'sesi'} diganti ke ${studentA?.name || ''}.`;
   if (swappedFutureSession && studentB) {
     const swappedCourse = courseMap.get(swappedFutureSession.courseId);
-    message += ` Jadwal ${studentA?.name} di M-${swappedFutureSession.sessionNumber} (${swappedCourse?.name || ''}) dialihkan ke ${studentB.name}.`;
+    message += ` Jatah ${studentA?.name} di M-${swappedFutureSession.sessionNumber} (${swappedCourse?.name || ''}) otomatis dialihkan ke ${studentB.name}.`;
+  } else if (replacedStudentId && !swappedFutureSession) {
+    message += ` (Perhatian: ${studentA?.name} tidak memiliki jatah jadwal di masa mendatang untuk diserahkan ke ${studentB?.name}).`;
   }
+
   if (exempted) {
     message += ` ${studentA?.name} telah lunas kewajiban dan dibebaskan dari jadwal berikutnya!`;
   }
@@ -878,6 +893,156 @@ export function smartRebalanceOnPjReplacement(
     swappedFutureSession,
     exemptedStudent: exempted ? studentA : undefined,
   };
+}
+
+/**
+ * Otomatis mengisi jadwal perkuliahan secara berurutan sesuai nomor urut absen (NIM)
+ * tanpa perlu mengklik tombol berulang kali.
+ * Menjaga sesi yang telah diedit/ditukar secara manual (isManuallyEdited).
+ */
+export function autoPopulateSequentialSchedule(
+  courses: Course[],
+  students: Student[],
+  sessions: SessionSchedule[]
+): SessionSchedule[] {
+  const activeStudents = students.filter((s) => s.isActive);
+  if (activeStudents.length === 0 || courses.length === 0 || sessions.length === 0) {
+    return sessions;
+  }
+
+  const courseMap = new Map<string, Course>();
+  courses.forEach((c) => courseMap.set(c.id, c));
+
+  // Sort students strictly by NIM / Attendance Order
+  const sortedStudents = [...activeStudents].sort((a, b) => {
+    if (a.nim && b.nim) {
+      return a.nim.localeCompare(b.nim, undefined, { numeric: true });
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  const N = sortedStudents.length;
+  if (N === 0) return sessions;
+
+  // Chronologically sort all non-practicum sessions across the semester
+  const allSessionsCopy: SessionSchedule[] = sessions.map((s) => ({
+    ...s,
+    assignedPjIds: [...s.assignedPjIds],
+  }));
+
+  allSessionsCopy.sort((a, b) => {
+    if (a.sessionNumber !== b.sessionNumber) {
+      return a.sessionNumber - b.sessionNumber;
+    }
+    const cA = courseMap.get(a.courseId);
+    const cB = courseMap.get(b.courseId);
+    const dayA = getDayOrder(cA?.day || '');
+    const dayB = getDayOrder(cB?.day || '');
+    if (dayA !== dayB) return dayA - dayB;
+    return (cA?.startTime || '').localeCompare(cB?.startTime || '');
+  });
+
+  let studentPointer = 0;
+
+  const populated = allSessionsCopy.map((session) => {
+    const course = courseMap.get(session.courseId);
+    const isPracticum = isPracticumCourse(course);
+
+    if (isPracticum) {
+      return {
+        ...session,
+        assignedPjIds: [],
+        originalPjIds: [],
+      };
+    }
+
+    // If session is already manually edited and has assigned PJs, preserve it
+    if (session.isManuallyEdited && session.assignedPjIds.length > 0) {
+      return session;
+    }
+
+    const assignedStudent = sortedStudents[studentPointer % N];
+    studentPointer++;
+
+    const pjIds = [assignedStudent.id];
+    return {
+      ...session,
+      assignedPjIds: pjIds,
+      originalPjIds: session.originalPjIds && session.originalPjIds.length > 0 ? session.originalPjIds : pjIds,
+    };
+  });
+
+  // Preserve initial session order
+  const populatedMap = new Map(populated.map((s) => [s.id, s]));
+  return sessions.map((s) => populatedMap.get(s.id) || s);
+}
+
+/**
+ * Menjadwalkan ulang seluruh sesi perkuliahan secara berurutan sesuai nomor absen/NIM dari awal.
+ * Menghapus perubahan manual jika pengguna secara sadar memilih reset jadwal.
+ */
+export function rescheduleAllSequential(
+  courses: Course[],
+  students: Student[],
+  sessions: SessionSchedule[]
+): SessionSchedule[] {
+  const activeStudents = students.filter((s) => s.isActive);
+  if (activeStudents.length === 0 || courses.length === 0 || sessions.length === 0) {
+    return sessions;
+  }
+
+  const courseMap = new Map<string, Course>();
+  courses.forEach((c) => courseMap.set(c.id, c));
+
+  const sortedStudents = [...activeStudents].sort((a, b) => {
+    if (a.nim && b.nim) {
+      return a.nim.localeCompare(b.nim, undefined, { numeric: true });
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  const N = sortedStudents.length;
+  if (N === 0) return sessions;
+
+  const sessionsToOrder = sessions.map((s) => ({
+    ...s,
+    assignedPjIds: [] as string[],
+    originalPjIds: [] as string[],
+    isManuallyEdited: false,
+    swapInfo: undefined,
+  }));
+
+  sessionsToOrder.sort((a, b) => {
+    if (a.sessionNumber !== b.sessionNumber) {
+      return a.sessionNumber - b.sessionNumber;
+    }
+    const cA = courseMap.get(a.courseId);
+    const cB = courseMap.get(b.courseId);
+    const dayA = getDayOrder(cA?.day || '');
+    const dayB = getDayOrder(cB?.day || '');
+    if (dayA !== dayB) return dayA - dayB;
+    return (cA?.startTime || '').localeCompare(cB?.startTime || '');
+  });
+
+  let studentPointer = 0;
+  const orderedSessions = sessionsToOrder.map((session) => {
+    const course = courseMap.get(session.courseId);
+    if (isPracticumCourse(course)) {
+      return { ...session, assignedPjIds: [], originalPjIds: [] };
+    }
+    const student = sortedStudents[studentPointer % N];
+    studentPointer++;
+    return {
+      ...session,
+      assignedPjIds: [student.id],
+      originalPjIds: [student.id],
+      isManuallyEdited: false,
+      swapInfo: undefined,
+    };
+  });
+
+  const orderedMap = new Map(orderedSessions.map((s) => [s.id, s]));
+  return sessions.map((s) => orderedMap.get(s.id) || s);
 }
 
 /**
