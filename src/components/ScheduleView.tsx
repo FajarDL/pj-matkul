@@ -60,10 +60,10 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
   const [editingSession, setEditingSession] = useState<SessionSchedule | null>(null);
   const [copiedSessionId, setCopiedSessionId] = useState<string | null>(null);
 
-  // Rotation Config Form State
+  // Rotation Config Form State (Defaults to strict round-robin queue)
   const [rotationConfig, setRotationConfig] = useState<RotationConfig>({
-    pjCountPerSession: 2,
-    mode: 'fair_random',
+    pjCountPerSession: 1,
+    mode: 'sequential_queue',
     startDate: new Date().toISOString().split('T')[0],
     intervalDays: 7,
     excludeSessionNumbers: [],
@@ -80,6 +80,21 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
     courses.forEach((c) => map.set(c.id, c));
     return map;
   }, [courses]);
+
+  // Track duties per student per week across all courses (for fairness & duplicate auditing)
+  const weeklyDuties = useMemo(() => {
+    const map = new Map<number, Map<string, number>>();
+    sessions.forEach((s) => {
+      if (!map.has(s.sessionNumber)) {
+        map.set(s.sessionNumber, new Map<string, number>());
+      }
+      const wMap = map.get(s.sessionNumber)!;
+      s.assignedPjIds.forEach((id) => {
+        wMap.set(id, (wMap.get(id) || 0) + 1);
+      });
+    });
+    return map;
+  }, [sessions]);
 
   // Count materials mapped by courseId-sessionNumber
   const materialCountBySession = useMemo(() => {
@@ -578,19 +593,45 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
 
                       <td className="py-3.5 px-4">
                         {assignedStudents.length > 0 ? (
-                          <div className="flex flex-wrap gap-1.5">
-                            {assignedStudents.map((student) => (
-                              <div
-                                key={student.id}
-                                className="inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 text-indigo-900 px-2 py-0.5 rounded-lg text-xs font-semibold"
-                              >
-                                <span className="w-4 h-4 rounded-full bg-indigo-600 text-white text-[9px] flex items-center justify-center font-bold shrink-0">
-                                  {student.name.charAt(0)}
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap gap-1.5">
+                              {assignedStudents.map((student) => {
+                                const dutiesThisWeek = weeklyDuties.get(session.sessionNumber)?.get(student.id) || 1;
+                                return (
+                                  <div
+                                    key={student.id}
+                                    className="inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 text-indigo-900 px-2 py-0.5 rounded-lg text-xs font-semibold"
+                                  >
+                                    <span className="w-4 h-4 rounded-full bg-indigo-600 text-white text-[9px] flex items-center justify-center font-bold shrink-0">
+                                      {student.name.charAt(0)}
+                                    </span>
+                                    <span>{student.name}</span>
+                                    <span className="text-[10px] font-mono text-indigo-600">({student.nim})</span>
+                                    {dutiesThisWeek > 1 && (
+                                      <span
+                                        className="text-[9px] bg-rose-100 text-rose-800 border border-rose-300 px-1 py-0.2 rounded font-bold"
+                                        title={`Mahasiswa ini memiliki ${dutiesThisWeek} jadwal di Minggu ke-${session.sessionNumber}`}
+                                      >
+                                        ⚠️ {dutiesThisWeek}x M-{session.sessionNumber}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {session.swapInfo && (
+                              <div className="flex items-center gap-1">
+                                <span
+                                  className="inline-flex items-center gap-1 text-[10px] bg-amber-50 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded font-medium"
+                                  title={session.swapInfo.note || 'Barter jadwal penugasan PJ'}
+                                >
+                                  <span>🔄 Barter PJ</span>
+                                  {session.swapInfo.note && (
+                                    <span className="text-amber-700 opacity-90">({session.swapInfo.note})</span>
+                                  )}
                                 </span>
-                                <span>{student.name}</span>
-                                <span className="text-[10px] font-mono text-indigo-600">({student.nim})</span>
                               </div>
-                            ))}
+                            )}
                           </div>
                         ) : isPracticumCourse(courseObj) ? (
                           <span className="text-xs text-purple-700 bg-purple-50 px-2.5 py-0.5 rounded-full border border-purple-200 font-medium inline-flex items-center gap-1">
@@ -651,6 +692,21 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                               <Share2 className="w-4 h-4" />
                             )}
                           </button>
+                          {isAdmin && !isPracticumCourse(courseObj) && session.assignedPjIds.length > 0 && (
+                            <button
+                              onClick={() => {
+                                setSwapSessionAId(session.id);
+                                setSwapStudentAId(session.assignedPjIds[0] || '');
+                                setSwapSessionBId('');
+                                setSwapStudentBId('');
+                                setIsSwapModalOpen(true);
+                              }}
+                              title="Tukar / Barter PJ Pertemuan Ini"
+                              className="p-1.5 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg transition cursor-pointer"
+                            >
+                              <ArrowLeftRight className="w-4 h-4" />
+                            </button>
+                          )}
                           {isAdmin && (
                             <button
                               onClick={() => setEditingSession({ ...session })}
@@ -728,6 +784,28 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                   Metode Pengacakan & Urutan
                 </label>
                 <div className="space-y-2">
+                  <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-indigo-200 bg-indigo-50/40 hover:bg-indigo-50/70 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="globalMode"
+                      value="sequential_queue"
+                      checked={rotationConfig.mode === 'sequential_queue'}
+                      onChange={() => setRotationConfig({ ...rotationConfig, mode: 'sequential_queue' })}
+                      className="mt-0.5 text-indigo-600 focus:ring-indigo-600"
+                    />
+                    <div>
+                      <div className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                        <span>Berurutan Antrian Absen (Round-Robin Queue)</span>
+                        <span className="text-[10px] bg-indigo-600 text-white px-1.5 py-0.2 rounded font-bold">
+                          Rekomendasi
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-indigo-800/80 mt-0.5">
+                        Mengisi seluruh mata kuliah urut per hari & jam (Senin s/d Jumat). Menjamin <strong>tidak ada dobel tugas di minggu yang sama</strong> dan <strong>tidak bertugas di minggu berturut-turut</strong> sampai seluruh absen selesai 1 rotasi penuh.
+                      </div>
+                    </div>
+                  </label>
+
                   <label className="flex items-start gap-2.5 p-2.5 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
                     <input
                       type="radio"
@@ -740,7 +818,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                     <div>
                       <div className="text-xs font-bold text-slate-900">Acak Adil & Merata (Fair Random)</div>
                       <div className="text-[11px] text-slate-500">
-                        Urutan diacak secara merata ke seluruh jadwal mata kuliah.
+                        Urutan diacak dengan aturan ketat: maksimal 1 tugas per minggu dan jeda wajib libur di minggu berikutnya.
                       </div>
                     </div>
                   </label>
@@ -757,7 +835,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                     <div>
                       <div className="text-xs font-bold text-slate-900">Berurutan Sesuai Urutan NIM</div>
                       <div className="text-[11px] text-slate-500">
-                        Mahasiswa bergilir sesuai urutan nomor induk mahasiswa terkecil.
+                        Mahasiswa diurutkan dari nomor induk terkecil ke terbesar, lalu berputar berurutan.
                       </div>
                     </div>
                   </label>
@@ -846,9 +924,10 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                   onChange={(e) => setRotationConfig({ ...rotationConfig, mode: e.target.value as any })}
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"
                 >
-                  <option value="fair_random">Acak Adil (Fair Random)</option>
+                  <option value="sequential_queue">Berurutan Sesuai Antrian Absen (Round-Robin)</option>
                   <option value="sequential_nim">Urutan NIM</option>
                   <option value="alphabetical">Urutan Nama A-Z</option>
+                  <option value="fair_random">Acak Adil (Fair Random)</option>
                 </select>
               </div>
 
@@ -877,17 +956,24 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs no-print">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="text-base font-bold text-slate-900">
-                Tukar Jadwal Penugasan (Swap PJ)
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <ArrowLeftRight className="w-4 h-4 text-indigo-600" />
+                <span>Tukar Jadwal Penugasan (Swap / Barter PJ)</span>
               </h3>
               <button onClick={() => setIsSwapModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <p className="text-xs text-slate-500">
-              Pilih dua pertemuan perkuliahan dan nama mahasiswa yang akan saling bertukar giliran PJ.
-            </p>
+            <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-900 flex items-start gap-2.5">
+              <ArrowLeftRight className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <span className="font-bold">Mekanisme Barter Giliran (Mutual Swap):</span>
+                <p className="text-[11px] text-indigo-800 leading-relaxed">
+                  Jika Mahasiswa Pihak Pertama bertukar dengan Mahasiswa Pihak Kedua, maka kedua mahasiswa saling bertukar jadwal tugas secara seimbang. Jatah giliran berikutnya otomatis saling menggantikan sehingga kuota 1 rotasi tetap adil.
+                </p>
+              </div>
+            </div>
 
             <form onSubmit={handleExecuteSwap} className="space-y-3">
               <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
@@ -896,8 +982,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                   <select
                     value={swapSessionAId}
                     onChange={(e) => {
-                      setSwapSessionAId(e.target.value);
-                      setSwapStudentAId('');
+                      const targetId = e.target.value;
+                      setSwapSessionAId(targetId);
+                      const sess = sessions.find((s) => s.id === targetId);
+                      if (sess && sess.assignedPjIds.length === 1) {
+                        setSwapStudentAId(sess.assignedPjIds[0]);
+                      } else {
+                        setSwapStudentAId('');
+                      }
                     }}
                     className="p-2 bg-white border border-slate-200 rounded-lg text-xs"
                     required
@@ -941,8 +1033,14 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({
                   <select
                     value={swapSessionBId}
                     onChange={(e) => {
-                      setSwapSessionBId(e.target.value);
-                      setSwapStudentBId('');
+                      const targetId = e.target.value;
+                      setSwapSessionBId(targetId);
+                      const sess = sessions.find((s) => s.id === targetId);
+                      if (sess && sess.assignedPjIds.length === 1) {
+                        setSwapStudentBId(sess.assignedPjIds[0]);
+                      } else {
+                        setSwapStudentBId('');
+                      }
                     }}
                     className="p-2 bg-white border border-slate-200 rounded-lg text-xs"
                     required
