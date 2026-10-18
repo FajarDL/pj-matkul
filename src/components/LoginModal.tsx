@@ -9,7 +9,8 @@ import {
   EyeOff, 
   X, 
   AlertCircle,
-  ShieldCheck
+  ShieldCheck,
+  Users
 } from 'lucide-react';
 
 interface LoginModalProps {
@@ -151,8 +152,30 @@ export const LoginModal: React.FC<LoginModalProps> = ({
               type="submit"
               className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
             >
-              <span>{isKeyConfigured ? 'Buka Halaman Utama' : 'Simpan Kunci & Masuk'}</span>
+              <span>{isKeyConfigured ? 'Buka Halaman Pengelola' : 'Simpan Kunci & Masuk'}</span>
               <ArrowRight className="w-4 h-4" />
+            </button>
+
+            <div className="relative my-3 text-center">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-200"></div>
+              </div>
+              <span className="relative px-2 bg-white text-[10px] text-slate-400 uppercase font-semibold tracking-wider">
+                Atau
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const res = authService.unlockAsGuest();
+                onLoginSuccess(res.session);
+                if (onClose) onClose();
+              }}
+              className="w-full py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-2 cursor-pointer border border-slate-200/80"
+            >
+              <Users className="w-4 h-4 text-slate-500" />
+              <span>Lihat Jadwal (Mode Mahasiswa)</span>
             </button>
 
 

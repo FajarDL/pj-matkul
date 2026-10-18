@@ -35,6 +35,7 @@ export interface Student {
   name: string;
   phone?: string;
   isActive: boolean;
+  order?: number; // Urutan nomor absen resmi kelas (1..N)
 }
 
 export interface Course {

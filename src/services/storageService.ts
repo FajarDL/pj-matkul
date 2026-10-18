@@ -1,20 +1,32 @@
 import type { AppState } from '../types';
+import { getRealClassInitialAppState } from '../data/classInitialData';
 
-const STORAGE_KEY = 'ROTASI_PJ_ACADEMIC_DATA_V2';
+const STORAGE_KEY = 'ROTASI_PJ_ACADEMIC_DATA_V3';
 
 export const storageService = {
   loadData(): AppState {
     try {
-      // Clear legacy sample data key if present
+      // Clear legacy storage keys if present
       localStorage.removeItem('ROTASI_PJ_MATKUL_DATA_V1');
+      localStorage.removeItem('ROTASI_PJ_ACADEMIC_DATA_V2');
 
       const serialized = localStorage.getItem(STORAGE_KEY);
       if (!serialized) {
-        return this.getDefaultData();
+        const defaultData = this.getDefaultData();
+        this.saveData(defaultData);
+        return defaultData;
       }
       const parsed = JSON.parse(serialized);
-      if (!parsed.courses || !parsed.students || !parsed.sessions) {
-        return this.getDefaultData();
+      if (
+        !parsed.courses ||
+        !parsed.students ||
+        !parsed.sessions ||
+        parsed.courses.length === 0 ||
+        parsed.students.length === 0
+      ) {
+        const defaultData = this.getDefaultData();
+        this.saveData(defaultData);
+        return defaultData;
       }
       return {
         ...parsed,
@@ -36,20 +48,22 @@ export const storageService = {
   },
 
   getDefaultData(): AppState {
-    return {
-      courses: [],
-      students: [],
-      sessions: [],
-      materials: [],
-      transactions: [],
-      activeCourseId: null,
-    };
+    return getRealClassInitialAppState();
+  },
+
+  resetToRealClassData(): AppState {
+    const freshData = getRealClassInitialAppState();
+    this.saveData(freshData);
+    return freshData;
   },
 
   clearAllData(): AppState {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem('ROTASI_PJ_ACADEMIC_DATA_V2');
     localStorage.removeItem('ROTASI_PJ_MATKUL_DATA_V1');
-    return this.getDefaultData();
+    const freshData = this.getDefaultData();
+    this.saveData(freshData);
+    return freshData;
   },
 
   exportBackup(data: AppState): void {

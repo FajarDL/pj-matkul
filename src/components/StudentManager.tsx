@@ -150,7 +150,10 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
         if (sortBy === 'name') {
           return a.name.localeCompare(b.name);
         }
-        // Default NIM
+        // Default NIM / Official Class Order
+        if (a.order !== undefined && b.order !== undefined) {
+          return a.order - b.order;
+        }
         if (a.nim && b.nim) {
           return a.nim.localeCompare(b.nim, undefined, { numeric: true });
         }
@@ -508,8 +511,8 @@ export const StudentManager: React.FC<StudentManagerProps> = ({
 
                   return (
                     <tr key={student.id} className="hover:bg-slate-50/70 transition">
-                      <td className="py-3 px-4 text-center text-slate-400 font-medium">
-                        {idx + 1}
+                      <td className="py-3 px-4 text-center text-slate-500 font-semibold font-mono text-xs">
+                        #{student.order !== undefined ? student.order : idx + 1}
                       </td>
 
                       <td className="py-3 px-4 font-mono font-semibold text-slate-800">

@@ -42,6 +42,7 @@ import {
   Wallet
 } from 'lucide-react';
 import { authService } from '../services/authService';
+import { storageService } from '../services/storageService';
 
 interface DashboardViewProps {
   courses: Course[];
@@ -646,6 +647,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         <div className="space-y-3 pt-1">
+          {/* Option: Sinkronkan Jadwal Kelas Riil */}
+          <div className="p-3.5 rounded-xl border border-indigo-200 bg-indigo-50/70 space-y-2">
+            <div className="flex items-start gap-2.5">
+              <Sparkles className="w-4 h-4 text-indigo-600 mt-0.5 shrink-0" />
+              <div>
+                <h4 className="text-xs font-bold text-indigo-950">
+                  Sinkronkan Jadwal Kelas Riil (Default Resmi)
+                </h4>
+                <p className="text-[11px] text-indigo-800 leading-relaxed mt-0.5">
+                  Memuat kembali 14 mata kuliah, 21 mahasiswa resmi, riwayat M-1 s/d M-3 (termasuk tugas Fajar), penyeimbangan M-4 (Irgi & Ryesisca), dan rotasi berurutan M-5 s/d M-16.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm('Muat ulang jadwal resmi kelas? Seluruh data akan diselaraskan dengan data asli perkuliahan.')) {
+                  storageService.resetToRealClassData();
+                  setIsResetModalOpen(false);
+                  window.location.reload();
+                }
+              }}
+              className="w-full mt-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-2xs transition cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Terapkan Jadwal Resmi Kelas</span>
+            </button>
+          </div>
+
           {/* Option 1: Hapus Seluruh Mata Kuliah Saja */}
           <div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100/70 transition space-y-2">
             <div className="flex items-start gap-2.5">

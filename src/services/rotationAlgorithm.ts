@@ -23,6 +23,23 @@ export function isPracticumCourse(course?: Course | null): boolean {
 }
 
 /**
+ * Sorts students strictly by configured order (attendance list 1..N),
+ * then NIM, then name.
+ * Ensures that explicit list order (e.g. Rara #21) is always respected.
+ */
+export function sortStudentsForRotation(students: Student[]): Student[] {
+  return [...students].sort((a, b) => {
+    if (a.order !== undefined && b.order !== undefined) {
+      return a.order - b.order;
+    }
+    if (a.nim && b.nim) {
+      return a.nim.localeCompare(b.nim, undefined, { numeric: true });
+    }
+    return a.name.localeCompare(b.name);
+  });
+}
+
+/**
  * Fisher-Yates Shuffle algorithm for true fair randomization
  */
 export function shuffleArray<T>(array: T[]): T[] {
@@ -158,13 +175,8 @@ export function generateRotationSchedule(
     return [];
   }
 
-  // Sort students strictly by NIM / attendance order
-  const sortedStudents = [...activeStudents].sort((a, b) => {
-    if (a.nim && b.nim) {
-      return a.nim.localeCompare(b.nim, undefined, { numeric: true });
-    }
-    return a.name.localeCompare(b.name);
-  });
+  // Sort students strictly by configured order / attendance order
+  const sortedStudents = sortStudentsForRotation(activeStudents);
 
   const startDateObj = config.startDate ? new Date(config.startDate) : new Date();
   const count = Math.max(1, config.pjCountPerSession);
@@ -371,12 +383,12 @@ export function generateQueueRotationSchedule(
 
   // Determine student ordering based on mode
   let orderedStudents = [...activeStudents];
-  if (config.mode === 'sequential_nim') {
-    orderedStudents.sort((a, b) => a.nim.localeCompare(b.nim));
-  } else if (config.mode === 'alphabetical') {
+  if (config.mode === 'alphabetical') {
     orderedStudents.sort((a, b) => a.name.localeCompare(b.name));
+  } else {
+    // sequential_queue or sequential_nim: respects order (1..N)
+    orderedStudents = sortStudentsForRotation(activeStudents);
   }
-  // If sequential_queue: preserves the exact order of activeStudents!
 
   const N = orderedStudents.length;
   const startDateObj = config.startDate ? new Date(config.startDate) : new Date();
@@ -616,13 +628,8 @@ export function generateGlobalRotationSchedule(
     return timeA.localeCompare(timeB);
   });
 
-  // Sort students strictly by NIM / attendance order
-  const sortedStudents = [...activeStudents].sort((a, b) => {
-    if (a.nim && b.nim) {
-      return a.nim.localeCompare(b.nim, undefined, { numeric: true });
-    }
-    return a.name.localeCompare(b.name);
-  });
+  // Sort students strictly by configured order / attendance order
+  const sortedStudents = sortStudentsForRotation(activeStudents);
 
   const count = Math.max(1, config.pjCountPerSession);
   let studentPointer = 0;
@@ -913,14 +920,8 @@ export function autoPopulateSequentialSchedule(
   const courseMap = new Map<string, Course>();
   courses.forEach((c) => courseMap.set(c.id, c));
 
-  // Sort students strictly by NIM / Attendance Order
-  const sortedStudents = [...activeStudents].sort((a, b) => {
-    if (a.nim && b.nim) {
-      return a.nim.localeCompare(b.nim, undefined, { numeric: true });
-    }
-    return a.name.localeCompare(b.name);
-  });
-
+  // Sort students strictly by configured attendance order / order field (1..N)
+  const sortedStudents = sortStudentsForRotation(activeStudents);
   const N = sortedStudents.length;
   if (N === 0) return sessions;
 
@@ -942,6 +943,23 @@ export function autoPopulateSequentialSchedule(
     return (cA?.startTime || '').localeCompare(cB?.startTime || '');
   });
 
+  // Calculate duty counts from completed sessions
+  const completedDutyCounts = new Map<string, number>();
+  allSessionsCopy.forEach((session) => {
+    if (session.status === 'completed') {
+      session.assignedPjIds.forEach((id) => {
+        completedDutyCounts.set(id, (completedDutyCounts.get(id) || 0) + 1);
+      });
+    }
+  });
+
+  const totalRegularSlots = allSessionsCopy.filter((s) => !isPracticumCourse(courseMap.get(s.courseId))).length;
+  const fairQuota = Math.ceil(totalRegularSlots / N);
+
+  // Exempt students who already reached quota (e.g. Fajar with 6 duties in W1)
+  let pool = sortedStudents.filter((s) => (completedDutyCounts.get(s.id) || 0) < fairQuota);
+  if (pool.length === 0) pool = sortedStudents;
+
   let studentPointer = 0;
 
   const populated = allSessionsCopy.map((session) => {
@@ -956,12 +974,20 @@ export function autoPopulateSequentialSchedule(
       };
     }
 
-    // If session is already manually edited and has assigned PJs, preserve it
-    if (session.isManuallyEdited && session.assignedPjIds.length > 0) {
+    // Preserve completed sessions or manually edited sessions with assigned PJs
+    if (
+      session.status === 'completed' ||
+      (session.isManuallyEdited && session.assignedPjIds.length > 0)
+    ) {
       return session;
     }
 
-    const assignedStudent = sortedStudents[studentPointer % N];
+    // If session already has assignedPjIds (e.g. seeded special rebalance), keep it
+    if (session.assignedPjIds.length > 0) {
+      return session;
+    }
+
+    const assignedStudent = pool[studentPointer % pool.length];
     studentPointer++;
 
     const pjIds = [assignedStudent.id];
@@ -978,13 +1004,14 @@ export function autoPopulateSequentialSchedule(
 }
 
 /**
- * Menjadwalkan ulang seluruh sesi perkuliahan secara berurutan sesuai nomor absen/NIM dari awal.
- * Menghapus perubahan manual jika pengguna secara sadar memilih reset jadwal.
+ * Menjadwalkan ulang seluruh sesi perkuliahan secara berurutan sesuai nomor absen (1..N).
+ * Dapat memilih untuk menjaga sesi yang telah selesai (preserveCompleted = true).
  */
 export function rescheduleAllSequential(
   courses: Course[],
   students: Student[],
-  sessions: SessionSchedule[]
+  sessions: SessionSchedule[],
+  preserveCompleted: boolean = true
 ): SessionSchedule[] {
   const activeStudents = students.filter((s) => s.isActive);
   if (activeStudents.length === 0 || courses.length === 0 || sessions.length === 0) {
@@ -994,22 +1021,14 @@ export function rescheduleAllSequential(
   const courseMap = new Map<string, Course>();
   courses.forEach((c) => courseMap.set(c.id, c));
 
-  const sortedStudents = [...activeStudents].sort((a, b) => {
-    if (a.nim && b.nim) {
-      return a.nim.localeCompare(b.nim, undefined, { numeric: true });
-    }
-    return a.name.localeCompare(b.name);
-  });
-
+  const sortedStudents = sortStudentsForRotation(activeStudents);
   const N = sortedStudents.length;
   if (N === 0) return sessions;
 
   const sessionsToOrder = sessions.map((s) => ({
     ...s,
-    assignedPjIds: [] as string[],
-    originalPjIds: [] as string[],
-    isManuallyEdited: false,
-    swapInfo: undefined,
+    assignedPjIds: [...s.assignedPjIds],
+    originalPjIds: s.originalPjIds ? [...s.originalPjIds] : [...s.assignedPjIds],
   }));
 
   sessionsToOrder.sort((a, b) => {
@@ -1024,13 +1043,35 @@ export function rescheduleAllSequential(
     return (cA?.startTime || '').localeCompare(cB?.startTime || '');
   });
 
+  // Calculate duty counts from completed sessions
+  const completedDutyCounts = new Map<string, number>();
+  sessionsToOrder.forEach((session) => {
+    if (session.status === 'completed') {
+      session.assignedPjIds.forEach((id) => {
+        completedDutyCounts.set(id, (completedDutyCounts.get(id) || 0) + 1);
+      });
+    }
+  });
+
+  const totalRegularSlots = sessionsToOrder.filter((s) => !isPracticumCourse(courseMap.get(s.courseId))).length;
+  const fairQuota = Math.ceil(totalRegularSlots / N);
+
+  // Exempt students who already reached quota (e.g. Fajar)
+  let pool = sortedStudents.filter((s) => (completedDutyCounts.get(s.id) || 0) < fairQuota);
+  if (pool.length === 0) pool = sortedStudents;
+
   let studentPointer = 0;
   const orderedSessions = sessionsToOrder.map((session) => {
     const course = courseMap.get(session.courseId);
     if (isPracticumCourse(course)) {
       return { ...session, assignedPjIds: [], originalPjIds: [] };
     }
-    const student = sortedStudents[studentPointer % N];
+
+    if (preserveCompleted && session.status === 'completed') {
+      return session;
+    }
+
+    const student = pool[studentPointer % pool.length];
     studentPointer++;
     return {
       ...session,

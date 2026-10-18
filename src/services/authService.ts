@@ -85,6 +85,19 @@ export const authService = {
     };
   },
 
+  unlockAsGuest(): { success: boolean; session: AuthSession } {
+    return {
+      success: true,
+      session: {
+        isAuthenticated: true,
+        isUnlocked: false,
+        role: 'student',
+        username: 'guest',
+        name: 'Mahasiswa (Mode Baca)',
+      },
+    };
+  },
+
   setUnlocked(unlocked: boolean, remember: boolean = false): void {
     if (unlocked) {
       sessionStorage.setItem(UNLOCKED_SESSION_KEY, 'true');
